@@ -1,4 +1,4 @@
-# Clawnify CRM App: The Open-Source HubSpot Alternative for SaaS
+# OpenClaw CRM App: The Open-Source HubSpot Alternative for SaaS
 
 A lightweight CRM with contacts, companies, and deals — built for SaaS dashboards and AI agents. Part of the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem. Zero cloud dependencies — runs locally with SQLite.
 
