@@ -140,10 +140,6 @@ Contacts belong to companies. Deals belong to contacts (and inherit the company)
 | PUT | `/api/deals/:id` | Update a deal |
 | DELETE | `/api/deals/:id` | Delete a deal |
 
-## How Clawnify Uses This
-
-[Clawnify](https://clawnify.com) uses this template as a starting point when AI agents request a CRM app via the App Builder. The `db.ts` file is swapped with a Cloudflare D1 adapter, the code is bundled, and deployed to Workers for Platforms. The rest of the app stays identical.
-
 ## Community & Contributions
 
 This project is part of the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem. Contributions are welcome — open an issue or submit a PR.
