@@ -4,6 +4,8 @@ A lightweight CRM with contacts, companies, and deals — built for SaaS dashboa
 
 Built with **Preact + Hono + SQLite**. Ships with a dual-mode UI: one for humans (clean, responsive tables) and one for AI agents (explicit buttons, large targets).
 
+<img width="1024" height="579" alt="Image" src="https://github.com/user-attachments/assets/62c3d79b-9bce-4ba8-b3eb-bfd7a81cc161" />
+
 ## What Is It?
 
 Clawnify CRM App is a production-ready contact relationship manager designed for the OpenClaw community. Think of it as an open-source HubSpot alternative — a CRM you can self-host, customize, and embed in any SaaS product.
