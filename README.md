@@ -26,8 +26,8 @@ Unlike HubSpot or Salesforce, this runs entirely on your own infrastructure with
 ## Quickstart
 
 ```bash
-git clone https://github.com/clawnify/crm-app.git
-cd crm-app
+git clone https://github.com/clawnify/open-crm.git
+cd open-crm
 pnpm install
 pnpm run dev
 ```
