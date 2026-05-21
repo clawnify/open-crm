@@ -8,11 +8,12 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@clawnify/db": "^0.2.0",
     "@hono/zod-openapi": "^0.18.0",
     "hono": "^4.6.0",
-    "zod": "^3.24.0",
     "lucide-preact": "^0.575.0",
-    "preact": "^10.25.0"
+    "preact": "^10.25.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.9.0",

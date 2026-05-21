@@ -6,7 +6,7 @@ type Env = { Bindings: { DB: D1Database } };
 const app = new OpenAPIHono<Env>();
 
 app.use("*", async (c, next) => {
-  initDB(c.env.DB);
+  initDB(c.env);
   await next();
 });
 
