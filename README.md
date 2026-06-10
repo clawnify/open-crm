@@ -97,23 +97,45 @@ src/
 
 Three entities with foreign key relationships:
 
-```
-┌──────────────┐       ┌──────────────┐       ┌──────────────┐
-│  companies   │       │   contacts   │       │    deals     │
-├──────────────┤       ├──────────────┤       ├──────────────┤
-│ id           │◄──┐   │ id           │◄──┐   │ id           │
-│ name         │   │   │ first_name   │   │   │ name         │
-│ domain       │   │   │ last_name    │   │   │ contact_id ──┼───┘
-│ industry     │   │   │ email        │   │   │ value        │
-│ phone        │   └───┼─ company_id  │   │   │ stage        │
-│ email        │       │ phone        │   │   │ close_date   │
-│ notes        │       │ title        │   │   │ notes        │
-│ created_at   │       │ status       │   │   │ created_at   │
-│ updated_at   │       │ created_at   │   │   │ updated_at   │
-└──────────────┘       │ updated_at   │   │   └──────────────┘
-                       └──────────────┘   │
-                                          │
-                    ON DELETE SET NULL ────┘
+```mermaid
+erDiagram
+    companies ||--o{ contacts : "has"
+    contacts  ||--o{ deals    : "has"
+
+    companies {
+        text id PK
+        text name
+        text domain
+        text industry
+        text phone
+        text email
+        text notes
+        text created_at
+        text updated_at
+    }
+    contacts {
+        text id PK
+        text first_name
+        text last_name
+        text email
+        text phone
+        text company_id FK "→ companies · ON DELETE SET NULL"
+        text title
+        text status
+        text created_at
+        text updated_at
+    }
+    deals {
+        text id PK
+        text name
+        text contact_id FK "→ contacts · ON DELETE SET NULL"
+        real value
+        text stage
+        text close_date
+        text notes
+        text created_at
+        text updated_at
+    }
 ```
 
 ```sql
