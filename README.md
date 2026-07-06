@@ -1,10 +1,10 @@
+<img src="readme-banner.png" alt="Open CRM preview" width="100%" />
+
 # OpenClaw CRM App: The Open-Source HubSpot Alternative for SaaS
 
 A lightweight CRM with contacts, companies, and deals — built for SaaS dashboards and AI agents. Part of the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem. Zero cloud dependencies — runs locally with SQLite.
 
 Built with **Preact + Hono + SQLite**. Ships with a dual-mode UI: one for humans (clean, responsive tables) and one for AI agents (explicit buttons, large targets).
-
-<img width="1024" height="579" alt="Image" src="https://github.com/user-attachments/assets/62c3d79b-9bce-4ba8-b3eb-bfd7a81cc161" />
 
 ## What Is It?
 
