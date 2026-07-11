@@ -1,6 +1,32 @@
 export type View = "contacts" | "companies" | "deals";
 export type EntityType = "contact" | "company" | "deal";
 
+/** Base storage type for a custom property. Widget flavours ride on top. */
+export type AttributeType =
+  | "string"
+  | "text"
+  | "integer"
+  | "decimal"
+  | "boolean"
+  | "date"
+  | "datetime"
+  | "enumeration"
+  | "json";
+
+/** A user-defined field on an entity type. Maps to a real column on the table. */
+export interface CustomFieldDef {
+  id: string;
+  entity_type: EntityType;
+  key: string;
+  label: string;
+  field_type: AttributeType;
+  custom_field: string; // widget registry uid, or "" for a bare base type
+  options: Record<string, unknown>;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Company {
   id: string;
   name: string;
@@ -10,6 +36,7 @@ export interface Company {
   email: string;
   notes: string;
   contact_count?: number;
+  custom?: Record<string, unknown>; // write payload; on reads, values are flat columns
   created_at: string;
   updated_at: string;
 }
@@ -25,6 +52,7 @@ export interface Contact {
   status: string;
   company_name?: string | null;
   company_domain?: string | null;
+  custom?: Record<string, unknown>; // write payload; on reads, values are flat columns
   created_at: string;
   updated_at: string;
 }
@@ -41,6 +69,7 @@ export interface Deal {
   contact_last_name?: string | null;
   company_name?: string | null;
   company_domain?: string | null;
+  custom?: Record<string, unknown>; // write payload; on reads, values are flat columns
   created_at: string;
   updated_at: string;
 }

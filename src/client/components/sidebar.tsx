@@ -1,4 +1,4 @@
-import { Users, Building2, CircleDollarSign } from "lucide-react";
+import { Users, Building2, CircleDollarSign, SlidersHorizontal } from "lucide-react";
 import { useCrm } from "../context";
 import { cn } from "../lib/utils";
 import type { Route } from "../hooks/use-router";
@@ -7,6 +7,10 @@ const NAV = [
   { key: "contacts", path: "/contacts", label: "Contacts", icon: Users },
   { key: "companies", path: "/companies", label: "Companies", icon: Building2 },
   { key: "deals", path: "/deals", label: "Deals", icon: CircleDollarSign },
+] as const;
+
+const SETTINGS_NAV = [
+  { key: "properties", path: "/settings/properties", label: "Properties", icon: SlidersHorizontal },
 ] as const;
 
 export function Sidebar({ route, navigate }: { route: Route; navigate: (to: string) => void }) {
@@ -45,6 +49,28 @@ export function Sidebar({ route, navigate }: { route: Route; navigate: (to: stri
               <span className={cn("tabular text-xs", active ? "text-sidebar-accent-foreground" : "text-muted-foreground")}>
                 {counts[item.key]}
               </span>
+            </button>
+          );
+        })}
+
+        <div className="eyebrow px-2.5 pb-1.5 pt-4">Settings</div>
+        {SETTINGS_NAV.map((item) => {
+          const active = activeKey === item.key;
+          return (
+            <button
+              key={item.key}
+              onClick={() => navigate(item.path)}
+              aria-label={item.label}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
+                active
+                  ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground hover:bg-secondary",
+              )}
+            >
+              <item.icon className="size-4 shrink-0" />
+              <span className="flex-1 text-left">{item.label}</span>
             </button>
           );
         })}

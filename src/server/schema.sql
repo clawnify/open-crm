@@ -51,8 +51,27 @@ CREATE TABLE IF NOT EXISTS activities (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Custom-property definitions. One row per user-defined field on an entity
+-- type. Each def maps to a REAL column on the entity's table, added via
+-- ALTER TABLE at definition time (see custom-fields.ts) so values are native,
+-- indexable columns — not a JSON blob. This table is only the registry.
+CREATE TABLE IF NOT EXISTS custom_field_defs (
+  id TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,                -- 'contact' | 'company' | 'deal'
+  key TEXT NOT NULL,                        -- column name; ^[a-z][a-z0-9_]*$
+  label TEXT NOT NULL,
+  field_type TEXT NOT NULL DEFAULT 'string',-- base type; drives SQL affinity + coercion
+  custom_field TEXT DEFAULT '',             -- widget registry uid (e.g. clawnify::score.score)
+  options TEXT NOT NULL DEFAULT '{}',        -- JSON: widget config (score min/max, badge enum, colors)
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(entity_type, key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company_id);
 CREATE INDEX IF NOT EXISTS idx_deals_contact ON deals(contact_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
 CREATE INDEX IF NOT EXISTS idx_deals_stage ON deals(stage);
 CREATE INDEX IF NOT EXISTS idx_activities_entity ON activities(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_custom_field_defs_entity ON custom_field_defs(entity_type, position);
