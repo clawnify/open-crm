@@ -10,7 +10,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import type { Contact, ImportField } from "@/types";
+import type { ImportField, ImportRow } from "@/types";
 
 type Step = "upload" | "map" | "done";
 
@@ -38,6 +38,9 @@ const FIELD_OPTIONS: { label: string; value: string }[] = [
   { label: "Phone", value: "phone" },
   { label: "Title", value: "title" },
   { label: "Company", value: "company" },
+  { label: "Company domain", value: "company_domain" },
+  { label: "Company industry", value: "company_industry" },
+  { label: "Company phone", value: "company_phone" },
   { label: "Status", value: "status" },
 ];
 
@@ -50,6 +53,8 @@ const EXACT: Record<string, ImportField> = {
   phone: "phone", phonenumber: "phone", mobile: "phone", mobilephone: "phone", cell: "phone", telephone: "phone", tel: "phone",
   title: "title", jobtitle: "title", role: "title", position: "title",
   company: "company", companyname: "company", organization: "company", organisation: "company", account: "company", employer: "company",
+  companydomain: "company_domain", domain: "company_domain", website: "company_domain", companywebsite: "company_domain",
+  industry: "company_industry", companyindustry: "company_industry", sector: "company_industry", vertical: "company_industry",
   status: "status", stage: "status", lifecyclestage: "status",
 };
 const FUZZY: [RegExp, ImportField][] = [
@@ -58,6 +63,8 @@ const FUZZY: [RegExp, ImportField][] = [
   [/^phone|phone$|mobile|^cell/, "phone"],
   [/^email|email$/, "email"],
   [/company|organi|employer/, "company"],
+  [/domain|website/, "company_domain"],
+  [/industry|sector/, "company_industry"],
   [/jobtitle|^title$|position/, "title"],
 ];
 function autoMap(headers: string[]): ImportField[] {
@@ -132,7 +139,7 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
     setBusy(true);
     try {
       const contacts = parsed.rows.map((row) => {
-        const out: Partial<Contact & { company: string }> = {};
+        const out: ImportRow = {};
         parsed.headers.forEach((_, i) => {
           const field = mapping[i];
           const val = (row[i] || "").trim();

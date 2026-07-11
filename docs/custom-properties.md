@@ -134,7 +134,21 @@ auto-create defs with an inferred type — `https://` → URL, `@` → email, 0�
 `custom_field_defs` + schema-sync path as the manual Properties screen. This is
 what turns a 40+-column spreadsheet drop into a native-looking CRM instead of
 dropped columns, and it's the single biggest reason custom properties earn their
-keep here.
+keep here. (Custom-property inference is still pending — tracked in issue #3.)
+
+### 7a. Company columns on import (shipped)
+
+The first slice of #3 to land is company-attribute capture. `/api/contacts/import`
+already dedupes companies by name, but only ever created a **name-only stub** —
+any `domain`/`industry`/`phone` in the file was dropped. The importer now exposes
+`Company domain`, `Company industry`, and `Company phone` mapping targets (auto-
+mapped from `domain`/`website`/`industry`/`sector` headers; `Company phone` is
+manual-only so a bare `Phone` column stays the contact's). A **newly created**
+company lands with those attributes filled from the first row that carries each
+one; an **existing** company is reused untouched — dedupe-by-name wins, so an
+import never overwrites an established company. Email-domain–based association
+(HubSpot's mechanism) stays out of v1 for the reasons in #3 (maintained free-email
+exclusion list); opt-in if ever built.
 
 ## 8. Scope boundaries (opinionated)
 
