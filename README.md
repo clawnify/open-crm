@@ -4,7 +4,7 @@
 
 A lightweight CRM with contacts, companies, and deals — built for SaaS dashboards and AI agents. Part of the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem. Zero cloud dependencies — runs locally with SQLite.
 
-Built with **Preact + Hono + SQLite**. Ships with a dual-mode UI: one for humans (clean, responsive tables) and one for AI agents (explicit buttons, large targets).
+Built with **React + Tailwind + shadcn/ui** on **Hono + Cloudflare D1**. Path-based routing, UUID keys, a dark mode that follows the OS, and a dual-mode UI: one for humans and one for AI agents (larger targets, always-visible actions).
 
 ## What Is It?
 
@@ -14,16 +14,15 @@ Unlike HubSpot or Salesforce, this runs entirely on your own infrastructure with
 
 ## Features
 
-- **Three entities** — contacts, companies, and deals with foreign key relationships
-- **Rich column types** — avatars, colored pills, entity icons with favicons, currency formatting, email/phone links
-- **Sidebar navigation** — switch between entities with count badges
-- **Sorting & filtering** — per-column sorting with debounced search
-- **Pagination** — server-side with page controls
-- **Deal pipeline** — track deals through stages (prospect → qualified → proposal → negotiation → won/lost)
-- **Footer calculations** — deal count and total value sum
-- **Company favicons** — auto-fetched from domain via [Favicone](https://favicone.com)
-- **Dual-mode UI** — human-optimized + AI-agent-optimized (`?agent=true`)
-- **SQLite persistence** — auto-creates schema and seeds realistic sample data on first run
+- **Three entities** — contacts, companies, and deals with foreign-key relationships (UUID keys, not enumerable ids)
+- **Activity timeline** — every contact/company/deal has a feed; emails, meetings, notes, and deal-won events all log to it
+- **Integrations (Clawnify connections)** — email a contact via Gmail, schedule a Google Calendar meeting, and post to Slack when a deal is won — all through the org's Clawnify connections, no keys in the app
+- **CSV / XLSX import** — upload a spreadsheet, map columns to fields (exact-match auto-mapping), preview, import; company names resolve to existing companies or are created
+- **Deal pipeline** — a board tracking deals through stages (prospect → qualified → proposal → negotiation → won/lost) with per-column totals
+- **Path routing** — deep-linkable views and records (`/contacts/:id`)
+- **Rich cells** — avatars, category badges, company favicons, tabular currency, email/phone links
+- **Sorting, search, pagination** — server-side, debounced
+- **Dual-mode UI** — human-optimized + AI-agent-optimized (`?agent=true`); dark mode follows the OS
 
 ## Quickstart
 
@@ -56,9 +55,10 @@ The human UI stays unchanged — hover-to-reveal actions, compact spacing, and a
 
 | Layer | Technology |
 |-------|-----------|
-| **Frontend** | Preact, TypeScript, Vite |
-| **Backend** | Hono, Node.js |
-| **Database** | SQLite (better-sqlite3) |
+| **Frontend** | React 19, Tailwind v4, shadcn/ui, TypeScript, Vite |
+| **Backend** | Hono on Cloudflare Workers |
+| **Database** | Cloudflare D1 (SQLite) via `@clawnify/db` |
+| **Integrations** | `@clawnify/connections` (Gmail, Google Calendar, Slack) |
 | **Icons** | Lucide |
 | **Favicons** | Favicone |
 

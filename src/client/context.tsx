@@ -1,10 +1,7 @@
-import { createContext } from "preact";
-import { useContext } from "preact/hooks";
-import type { View, Contact, Company, Deal, Stats, PaginatedState, CompanyLookup, ContactLookup } from "./types";
+import { createContext, useContext } from "react";
+import type { View, Contact, Company, Deal, Stats, PaginatedState, CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType } from "./types";
 
 export interface CrmContextValue {
-  view: View;
-  setView: (v: View) => void;
   isAgent: boolean;
   stats: Stats;
 
@@ -15,8 +12,9 @@ export interface CrmContextValue {
   setContactsSort: (col: string) => void;
   setContactsSearch: (search: string) => void;
   addContact: (data: Partial<Contact>) => Promise<void>;
-  updateContact: (id: number, data: Partial<Contact>) => Promise<void>;
-  deleteContact: (id: number) => Promise<void>;
+  updateContact: (id: string, data: Partial<Contact>) => Promise<void>;
+  deleteContact: (id: string) => Promise<void>;
+  fetchContact: (id: string) => Promise<Contact | null>;
 
   // Companies
   companies: Company[];
@@ -25,8 +23,8 @@ export interface CrmContextValue {
   setCompaniesSort: (col: string) => void;
   setCompaniesSearch: (search: string) => void;
   addCompany: (data: Partial<Company>) => Promise<void>;
-  updateCompany: (id: number, data: Partial<Company>) => Promise<void>;
-  deleteCompany: (id: number) => Promise<void>;
+  updateCompany: (id: string, data: Partial<Company>) => Promise<void>;
+  deleteCompany: (id: string) => Promise<void>;
 
   // Deals
   deals: Deal[];
@@ -36,13 +34,25 @@ export interface CrmContextValue {
   setDealsSort: (col: string) => void;
   setDealsSearch: (search: string) => void;
   addDeal: (data: Partial<Deal>) => Promise<void>;
-  updateDeal: (id: number, data: Partial<Deal>) => Promise<void>;
-  deleteDeal: (id: number) => Promise<void>;
+  updateDeal: (id: string, data: Partial<Deal>) => Promise<void>;
+  deleteDeal: (id: string) => Promise<void>;
   boardDeals: Deal[];
 
   // Lookups
   companyLookup: CompanyLookup[];
   contactLookup: ContactLookup[];
+
+  // Integrations (Clawnify connections)
+  connections: ConnectionStatus;
+  emailContact: (contactId: string, subject: string, body: string) => Promise<void>;
+  scheduleMeeting: (contactId: string, data: { summary: string; start_datetime: string; timezone: string; duration_minutes: number }) => Promise<void>;
+
+  // Activity timeline
+  fetchActivities: (entityType: EntityType, entityId: string) => Promise<Activity[]>;
+  addNote: (entityType: EntityType, entityId: string, body: string) => Promise<void>;
+
+  // Contact import (CSV / XLSX)
+  importContacts: (rows: Partial<Contact & { company: string }>[]) => Promise<{ imported: number; companiesCreated: number; skipped: number }>;
 
   loading: boolean;
   error: string | null;
@@ -54,3 +64,6 @@ export const CrmContext = createContext<CrmContextValue>(null!);
 export function useCrm() {
   return useContext(CrmContext);
 }
+
+// The current view is derived from the URL route, not context.
+export type { View };
