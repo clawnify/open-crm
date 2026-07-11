@@ -1,8 +1,8 @@
-import { useState, useCallback, useEffect } from "preact/hooks";
+import { useState, useCallback, useEffect, type Dispatch, type SetStateAction } from "react";
 import { api } from "../api";
 import type {
-  View, Contact, Company, Deal, Stats, PaginatedState,
-  CompanyLookup, ContactLookup,
+  Contact, Company, Deal, Stats, PaginatedState,
+  CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType,
 } from "../types";
 import type { CrmContextValue } from "../context";
 
@@ -10,75 +10,54 @@ const defaultPag = (sort: string): PaginatedState => ({
   page: 1, limit: 25, total: 0, sort, order: "desc", search: "",
 });
 
+function pagParams(pag: PaginatedState): URLSearchParams {
+  const p = new URLSearchParams({
+    page: String(pag.page), limit: String(pag.limit), sort: pag.sort, order: pag.order,
+  });
+  if (pag.search) p.set("search", pag.search);
+  return p;
+}
+
 export function useCrmState(isAgent: boolean): CrmContextValue {
-  const [view, setView] = useState<View>("contacts");
   const [stats, setStats] = useState<Stats>({ contacts: 0, companies: 0, deals: 0, dealValue: 0 });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Contacts
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [contactsPag, setContactsPag] = useState<PaginatedState>(defaultPag("id"));
+  const [contactsPag, setContactsPag] = useState<PaginatedState>(defaultPag("created_at"));
 
-  // Companies
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [companiesPag, setCompaniesPag] = useState<PaginatedState>(defaultPag("id"));
+  const [companiesPag, setCompaniesPag] = useState<PaginatedState>(defaultPag("created_at"));
 
-  // Deals
   const [deals, setDeals] = useState<Deal[]>([]);
-  const [dealsPag, setDealsPag] = useState<PaginatedState>(defaultPag("id"));
+  const [dealsPag, setDealsPag] = useState<PaginatedState>(defaultPag("created_at"));
   const [dealsTotalValue, setDealsTotalValue] = useState(0);
   const [boardDeals, setBoardDeals] = useState<Deal[]>([]);
 
-  // Lookups
   const [companyLookup, setCompanyLookup] = useState<CompanyLookup[]>([]);
   const [contactLookup, setContactLookup] = useState<ContactLookup[]>([]);
+  const [connections, setConnections] = useState<ConnectionStatus>({ email: false, meeting: false, slack: false });
 
-  // ── Fetch helpers ──
+  // ── Fetchers ──
 
   const fetchStats = useCallback(async () => {
-    const data = await api<Stats>("GET", "/api/stats");
-    setStats(data);
+    setStats(await api<Stats>("GET", "/api/stats"));
   }, []);
 
   const fetchContacts = useCallback(async (pag: PaginatedState) => {
-    const params = new URLSearchParams({
-      page: String(pag.page),
-      limit: String(pag.limit),
-      sort: pag.sort,
-      order: pag.order,
-    });
-    if (pag.search) params.set("search", pag.search);
-
-    const data = await api<{ contacts: Contact[]; total: number }>("GET", `/api/contacts?${params}`);
+    const data = await api<{ contacts: Contact[]; total: number }>("GET", `/api/contacts?${pagParams(pag)}`);
     setContacts(data.contacts);
     setContactsPag((prev) => ({ ...prev, total: data.total }));
   }, []);
 
   const fetchCompanies = useCallback(async (pag: PaginatedState) => {
-    const params = new URLSearchParams({
-      page: String(pag.page),
-      limit: String(pag.limit),
-      sort: pag.sort,
-      order: pag.order,
-    });
-    if (pag.search) params.set("search", pag.search);
-
-    const data = await api<{ companies: Company[]; total: number }>("GET", `/api/companies?${params}`);
+    const data = await api<{ companies: Company[]; total: number }>("GET", `/api/companies?${pagParams(pag)}`);
     setCompanies(data.companies);
     setCompaniesPag((prev) => ({ ...prev, total: data.total }));
   }, []);
 
   const fetchDeals = useCallback(async (pag: PaginatedState) => {
-    const params = new URLSearchParams({
-      page: String(pag.page),
-      limit: String(pag.limit),
-      sort: pag.sort,
-      order: pag.order,
-    });
-    if (pag.search) params.set("search", pag.search);
-
-    const data = await api<{ deals: Deal[]; total: number; totalValue: number }>("GET", `/api/deals?${params}`);
+    const data = await api<{ deals: Deal[]; total: number; totalValue: number }>("GET", `/api/deals?${pagParams(pag)}`);
     setDeals(data.deals);
     setDealsPag((prev) => ({ ...prev, total: data.total }));
     setDealsTotalValue(data.totalValue);
@@ -98,6 +77,14 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     setContactLookup(ct.contacts);
   }, []);
 
+  const fetchConnections = useCallback(async () => {
+    try {
+      setConnections(await api<ConnectionStatus>("GET", "/api/integrations/status"));
+    } catch {
+      /* off-platform / no broker — leave everything disconnected */
+    }
+  }, []);
+
   // ── Initial load ──
 
   useEffect(() => {
@@ -105,12 +92,8 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
       setLoading(true);
       try {
         await Promise.all([
-          fetchStats(),
-          fetchContacts(contactsPag),
-          fetchCompanies(companiesPag),
-          fetchDeals(dealsPag),
-          fetchBoardDeals(),
-          fetchLookups(),
+          fetchStats(), fetchContacts(contactsPag), fetchCompanies(companiesPag),
+          fetchDeals(dealsPag), fetchBoardDeals(), fetchLookups(), fetchConnections(),
         ]);
       } catch (err) {
         setError((err as Error).message);
@@ -118,144 +101,133 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
         setLoading(false);
       }
     })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Refetch on pagination/sort/search changes ──
+  // ── Per-list refetch when its pagination/sort/search changes ──
 
-  const refreshCurrentView = useCallback(async () => {
-    try {
-      if (view === "contacts") await fetchContacts(contactsPag);
-      else if (view === "companies") await fetchCompanies(companiesPag);
-      else await fetchDeals(dealsPag);
-      await fetchStats();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }, [view, contactsPag, companiesPag, dealsPag, fetchContacts, fetchCompanies, fetchDeals, fetchStats]);
+  useEffect(() => { fetchContacts(contactsPag).catch((e) => setError((e as Error).message)); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [contactsPag.page, contactsPag.sort, contactsPag.order, contactsPag.search]);
+  useEffect(() => { fetchCompanies(companiesPag).catch((e) => setError((e as Error).message)); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [companiesPag.page, companiesPag.sort, companiesPag.order, companiesPag.search]);
+  useEffect(() => { fetchDeals(dealsPag).catch((e) => setError((e as Error).message)); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dealsPag.page, dealsPag.sort, dealsPag.order, dealsPag.search]);
 
-  useEffect(() => {
-    refreshCurrentView();
-  }, [contactsPag.page, contactsPag.sort, contactsPag.order, contactsPag.search,
-      companiesPag.page, companiesPag.sort, companiesPag.order, companiesPag.search,
-      dealsPag.page, dealsPag.sort, dealsPag.order, dealsPag.search]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Pagination setters ──
+
+  const makeSetters = (setter: Dispatch<SetStateAction<PaginatedState>>) => ({
+    setPage: (page: number) => setter((p) => ({ ...p, page })),
+    setSort: (col: string) => setter((p) => ({ ...p, sort: col, order: p.sort === col && p.order === "asc" ? "desc" : "asc", page: 1 })),
+    setSearch: (search: string) => setter((p) => ({ ...p, search, page: 1 })),
+  });
+  const cSet = makeSetters(setContactsPag);
+  const coSet = makeSetters(setCompaniesPag);
+  const dSet = makeSetters(setDealsPag);
 
   // ── Contacts CRUD ──
 
-  const setContactsPage = useCallback((page: number) => {
-    setContactsPag((prev) => ({ ...prev, page }));
-  }, []);
-
-  const setContactsSort = useCallback((col: string) => {
-    setContactsPag((prev) => ({
-      ...prev,
-      sort: col,
-      order: prev.sort === col && prev.order === "asc" ? "desc" : "asc",
-      page: 1,
-    }));
-  }, []);
-
-  const setContactsSearch = useCallback((search: string) => {
-    setContactsPag((prev) => ({ ...prev, search, page: 1 }));
-  }, []);
-
   const addContact = useCallback(async (data: Partial<Contact>) => {
     await api("POST", "/api/contacts", data);
-    await fetchContacts(contactsPag);
-    await Promise.all([fetchStats(), fetchLookups()]);
+    await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
   }, [contactsPag, fetchContacts, fetchStats, fetchLookups]);
 
-  const updateContact = useCallback(async (id: number, data: Partial<Contact>) => {
+  const updateContact = useCallback(async (id: string, data: Partial<Contact>) => {
     await api("PUT", `/api/contacts/${id}`, data);
-    await fetchContacts(contactsPag);
-    await fetchLookups();
+    await Promise.all([fetchContacts(contactsPag), fetchLookups()]);
   }, [contactsPag, fetchContacts, fetchLookups]);
 
-  const deleteContact = useCallback(async (id: number) => {
+  const deleteContact = useCallback(async (id: string) => {
     await api("DELETE", `/api/contacts/${id}`);
-    await fetchContacts(contactsPag);
-    await Promise.all([fetchStats(), fetchLookups()]);
+    await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
   }, [contactsPag, fetchContacts, fetchStats, fetchLookups]);
+
+  const fetchContact = useCallback(async (id: string): Promise<Contact | null> => {
+    try {
+      const data = await api<{ contact: Contact }>("GET", `/api/contacts/${id}`);
+      return data.contact;
+    } catch {
+      return null;
+    }
+  }, []);
 
   // ── Companies CRUD ──
 
-  const setCompaniesPage = useCallback((page: number) => {
-    setCompaniesPag((prev) => ({ ...prev, page }));
-  }, []);
-
-  const setCompaniesSort = useCallback((col: string) => {
-    setCompaniesPag((prev) => ({
-      ...prev,
-      sort: col,
-      order: prev.sort === col && prev.order === "asc" ? "desc" : "asc",
-      page: 1,
-    }));
-  }, []);
-
-  const setCompaniesSearch = useCallback((search: string) => {
-    setCompaniesPag((prev) => ({ ...prev, search, page: 1 }));
-  }, []);
-
   const addCompany = useCallback(async (data: Partial<Company>) => {
     await api("POST", "/api/companies", data);
-    await fetchCompanies(companiesPag);
-    await Promise.all([fetchStats(), fetchLookups()]);
+    await Promise.all([fetchCompanies(companiesPag), fetchStats(), fetchLookups()]);
   }, [companiesPag, fetchCompanies, fetchStats, fetchLookups]);
 
-  const updateCompany = useCallback(async (id: number, data: Partial<Company>) => {
+  const updateCompany = useCallback(async (id: string, data: Partial<Company>) => {
     await api("PUT", `/api/companies/${id}`, data);
-    await fetchCompanies(companiesPag);
-    await fetchLookups();
+    await Promise.all([fetchCompanies(companiesPag), fetchLookups()]);
   }, [companiesPag, fetchCompanies, fetchLookups]);
 
-  const deleteCompany = useCallback(async (id: number) => {
+  const deleteCompany = useCallback(async (id: string) => {
     await api("DELETE", `/api/companies/${id}`);
-    await fetchCompanies(companiesPag);
-    await Promise.all([fetchStats(), fetchLookups()]);
+    await Promise.all([fetchCompanies(companiesPag), fetchStats(), fetchLookups()]);
   }, [companiesPag, fetchCompanies, fetchStats, fetchLookups]);
 
   // ── Deals CRUD ──
-
-  const setDealsPage = useCallback((page: number) => {
-    setDealsPag((prev) => ({ ...prev, page }));
-  }, []);
-
-  const setDealsSort = useCallback((col: string) => {
-    setDealsPag((prev) => ({
-      ...prev,
-      sort: col,
-      order: prev.sort === col && prev.order === "asc" ? "desc" : "asc",
-      page: 1,
-    }));
-  }, []);
-
-  const setDealsSearch = useCallback((search: string) => {
-    setDealsPag((prev) => ({ ...prev, search, page: 1 }));
-  }, []);
 
   const addDeal = useCallback(async (data: Partial<Deal>) => {
     await api("POST", "/api/deals", data);
     await Promise.all([fetchDeals(dealsPag), fetchBoardDeals(), fetchStats()]);
   }, [dealsPag, fetchDeals, fetchBoardDeals, fetchStats]);
 
-  const updateDeal = useCallback(async (id: number, data: Partial<Deal>) => {
+  const updateDeal = useCallback(async (id: string, data: Partial<Deal>) => {
     await api("PUT", `/api/deals/${id}`, data);
     await Promise.all([fetchDeals(dealsPag), fetchBoardDeals(), fetchStats()]);
   }, [dealsPag, fetchDeals, fetchBoardDeals, fetchStats]);
 
-  const deleteDeal = useCallback(async (id: number) => {
+  const deleteDeal = useCallback(async (id: string) => {
     await api("DELETE", `/api/deals/${id}`);
     await Promise.all([fetchDeals(dealsPag), fetchBoardDeals(), fetchStats()]);
   }, [dealsPag, fetchDeals, fetchBoardDeals, fetchStats]);
 
+  // ── Integrations & timeline ──
+
+  const emailContact = useCallback(async (contactId: string, subject: string, body: string) => {
+    await api("POST", "/api/integrations/email", { contact_id: contactId, subject, body });
+  }, []);
+
+  const scheduleMeeting = useCallback(async (
+    contactId: string,
+    data: { summary: string; start_datetime: string; timezone: string; duration_minutes: number },
+  ) => {
+    await api("POST", "/api/integrations/meeting", { contact_id: contactId, ...data });
+  }, []);
+
+  const fetchActivities = useCallback(async (entityType: EntityType, entityId: string) => {
+    const data = await api<{ activities: Activity[] }>("GET", `/api/activities?entity_type=${entityType}&entity_id=${entityId}`);
+    return data.activities;
+  }, []);
+
+  const addNote = useCallback(async (entityType: EntityType, entityId: string, body: string) => {
+    await api("POST", "/api/activities", { entity_type: entityType, entity_id: entityId, type: "note", body });
+  }, []);
+
+  // ── Contact import ──
+
+  const importContacts = useCallback(async (rows: Partial<Contact & { company: string }>[]) => {
+    const res = await api<{ imported: number; companiesCreated: number; skipped: number }>("POST", "/api/contacts/import", { contacts: rows });
+    await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
+    return res;
+  }, [contactsPag, fetchContacts, fetchStats, fetchLookups]);
+
   return {
-    view, setView, isAgent, stats,
-    contacts, contactsPag, setContactsPage, setContactsSort, setContactsSearch,
-    addContact, updateContact, deleteContact,
-    companies, companiesPag, setCompaniesPage, setCompaniesSort, setCompaniesSearch,
+    isAgent, stats,
+    contacts, contactsPag, setContactsPage: cSet.setPage, setContactsSort: cSet.setSort, setContactsSearch: cSet.setSearch,
+    addContact, updateContact, deleteContact, fetchContact,
+    companies, companiesPag, setCompaniesPage: coSet.setPage, setCompaniesSort: coSet.setSort, setCompaniesSearch: coSet.setSearch,
     addCompany, updateCompany, deleteCompany,
-    deals, dealsPag, dealsTotalValue, setDealsPage, setDealsSort, setDealsSearch,
+    deals, dealsPag, dealsTotalValue, setDealsPage: dSet.setPage, setDealsSort: dSet.setSort, setDealsSearch: dSet.setSearch,
     addDeal, updateDeal, deleteDeal, boardDeals,
     companyLookup, contactLookup,
+    connections, emailContact, scheduleMeeting,
+    fetchActivities, addNote, importContacts,
     loading, error, setError,
   };
 }

@@ -7,9 +7,14 @@
   "tags": ["crm", "sales", "contacts", "pipeline"],
 
   "app": {
-    "framework": "preact+hono",
+    "framework": "react+hono",
     "database": true,
-    "storage": false
+    "storage": false,
+    "credentials": ["googlesuper", "googlecalendar", "slack"]
+  },
+
+  "env": {
+    "optional": ["SLACK_CHANNEL"]
   },
 
   "deploy": {

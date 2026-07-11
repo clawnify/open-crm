@@ -1,7 +1,45 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { initDB, query, get, run } from "./db.js";
+import type { CredentialBinding } from "@clawnify/connections";
+import { sendEmail, createMeeting, notifySlack, connectionStatus } from "./integrations.js";
 
-type Env = { Bindings: { DB: D1Database } };
+// In production Clawnify injects the CREDENTIALS broker binding + CLAWNIFY_ORG_ID
+// whenever clawnify.json declares `app.credentials`. SLACK_CHANNEL is an optional
+// custom env var: when set (and Slack is connected), won deals auto-notify it.
+type Env = {
+  Bindings: {
+    DB: D1Database;
+    CREDENTIALS?: CredentialBinding;
+    CLAWNIFY_ORG_ID?: string;
+    SLACK_CHANNEL?: string;
+  };
+};
+
+/** Split an array into fixed-size chunks. Used to keep bulk SQL within D1's
+ * 100-bound-parameter limit (the same cap applies to the preview-tier Facet). */
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/** Append a row to the activity timeline. Never throws — logging is best-effort. */
+async function logActivity(
+  entity_type: string,
+  entity_id: string,
+  type: string,
+  body: string,
+  meta: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await run(
+      "INSERT INTO activities (id, entity_type, entity_id, type, body, meta) VALUES (?, ?, ?, ?, ?, ?)",
+      [crypto.randomUUID(), entity_type, entity_id, type, body, JSON.stringify(meta)],
+    );
+  } catch {
+    /* timeline logging must never break the primary action */
+  }
+}
 
 const app = new OpenAPIHono<Env>();
 
@@ -16,7 +54,7 @@ const ErrorSchema = z.object({ error: z.string() }).openapi("Error");
 const OkSchema = z.object({ ok: z.boolean() }).openapi("Ok");
 
 const CompanySchema = z.object({
-  id: z.number().int(),
+  id: z.string(),
   name: z.string(),
   domain: z.string(),
   industry: z.string(),
@@ -29,12 +67,12 @@ const CompanySchema = z.object({
 }).openapi("Company");
 
 const ContactSchema = z.object({
-  id: z.number().int(),
+  id: z.string(),
   first_name: z.string(),
   last_name: z.string(),
   email: z.string(),
   phone: z.string(),
-  company_id: z.number().int().nullable(),
+  company_id: z.string().nullable(),
   title: z.string(),
   status: z.string(),
   company_name: z.string().nullable().optional(),
@@ -44,9 +82,9 @@ const ContactSchema = z.object({
 }).openapi("Contact");
 
 const DealSchema = z.object({
-  id: z.number().int(),
+  id: z.string(),
   name: z.string(),
-  contact_id: z.number().int().nullable(),
+  contact_id: z.string().nullable(),
   value: z.number(),
   stage: z.string(),
   close_date: z.string(),
@@ -210,12 +248,13 @@ app.openapi(createCompany, async (c) => {
     const name = body.name.trim();
     if (!name) return c.json({ error: "Name is required" }, 400);
 
-    const result = await run(
-      "INSERT INTO companies (name, domain, industry, phone, email, notes) VALUES (?, ?, ?, ?, ?, ?)",
-      [name, (body.domain || "").trim(), (body.industry || "").trim(), (body.phone || "").trim(), (body.email || "").trim(), (body.notes || "").trim()],
+    const id = crypto.randomUUID();
+    await run(
+      "INSERT INTO companies (id, name, domain, industry, phone, email, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, name, (body.domain || "").trim(), (body.industry || "").trim(), (body.phone || "").trim(), (body.email || "").trim(), (body.notes || "").trim()],
     );
 
-    const inserted = await get("SELECT * FROM companies WHERE id = ?", [result.lastInsertRowid]);
+    const inserted = await get("SELECT * FROM companies WHERE id = ?", [id]);
     return c.json({ company: inserted }, 201);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -251,9 +290,8 @@ const updateCompany = createRoute({
 
 app.openapi(updateCompany, async (c) => {
   try {
-    const { id: idStr } = c.req.valid("param");
-    const id = parseInt(idStr, 10);
-    if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    const { id } = c.req.valid("param");
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const body = c.req.valid("json");
     const fields: string[] = [];
@@ -296,9 +334,8 @@ const deleteCompany = createRoute({
 
 app.openapi(deleteCompany, async (c) => {
   try {
-    const { id: idStr } = c.req.valid("param");
-    const id = parseInt(idStr, 10);
-    if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    const { id } = c.req.valid("param");
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const result = await run("DELETE FROM companies WHERE id = ?", [id]);
     if (result.changes === 0) return c.json({ error: "Company not found" }, 404);
@@ -363,7 +400,7 @@ app.openapi(listContacts, async (c) => {
     }
     if (companyId) {
       where.push("ct.company_id = ?");
-      params.push(parseInt(companyId, 10));
+      params.push(companyId);
     }
 
     const whereSQL = where.length ? " WHERE " + where.join(" AND ") : "";
@@ -405,7 +442,7 @@ const createContact = createRoute({
         last_name: z.string().optional(),
         email: z.string().optional(),
         phone: z.string().optional(),
-        company_id: z.union([z.number().int(), z.string()]).nullable().optional(),
+        company_id: z.string().nullable().optional(),
         title: z.string().optional(),
         status: z.string().optional(),
       }) } },
@@ -424,18 +461,19 @@ app.openapi(createContact, async (c) => {
     const firstName = body.first_name.trim();
     if (!firstName) return c.json({ error: "First name is required" }, 400);
 
-    const companyId = body.company_id ? parseInt(String(body.company_id), 10) : null;
+    const companyId = body.company_id ? String(body.company_id) : null;
 
-    const result = await run(
-      "INSERT INTO contacts (first_name, last_name, email, phone, company_id, title, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [firstName, (body.last_name || "").trim(), (body.email || "").trim(), (body.phone || "").trim(), companyId, (body.title || "").trim(), (body.status || "lead").trim()],
+    const id = crypto.randomUUID();
+    await run(
+      "INSERT INTO contacts (id, first_name, last_name, email, phone, company_id, title, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, firstName, (body.last_name || "").trim(), (body.email || "").trim(), (body.phone || "").trim(), companyId, (body.title || "").trim(), (body.status || "lead").trim()],
     );
 
     const inserted = await get(
       `SELECT ct.*, co.name as company_name, co.domain as company_domain
        FROM contacts ct LEFT JOIN companies co ON ct.company_id = co.id
        WHERE ct.id = ?`,
-      [result.lastInsertRowid],
+      [id],
     );
     return c.json({ contact: inserted }, 201);
   } catch (err: unknown) {
@@ -457,7 +495,7 @@ const updateContact = createRoute({
         last_name: z.string().optional(),
         email: z.string().optional(),
         phone: z.string().optional(),
-        company_id: z.union([z.number().int(), z.string()]).nullable().optional(),
+        company_id: z.string().nullable().optional(),
         title: z.string().optional(),
         status: z.string().optional(),
       }) } },
@@ -473,9 +511,8 @@ const updateContact = createRoute({
 
 app.openapi(updateContact, async (c) => {
   try {
-    const { id: idStr } = c.req.valid("param");
-    const id = parseInt(idStr, 10);
-    if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    const { id } = c.req.valid("param");
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const body = c.req.valid("json");
     const fields: string[] = [];
@@ -489,7 +526,7 @@ app.openapi(updateContact, async (c) => {
     }
     if (body.company_id !== undefined) {
       fields.push("company_id = ?");
-      params.push(body.company_id ? parseInt(String(body.company_id), 10) : null);
+      params.push(body.company_id ? String(body.company_id) : null);
     }
 
     if (fields.length === 0) return c.json({ error: "No fields to update" }, 400);
@@ -527,9 +564,8 @@ const deleteContact = createRoute({
 
 app.openapi(deleteContact, async (c) => {
   try {
-    const { id: idStr } = c.req.valid("param");
-    const id = parseInt(idStr, 10);
-    if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    const { id } = c.req.valid("param");
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const result = await run("DELETE FROM contacts WHERE id = ?", [id]);
     if (result.changes === 0) return c.json({ error: "Contact not found" }, 404);
@@ -623,7 +659,7 @@ app.openapi(listDeals, async (c) => {
     }
     if (contactId) {
       where.push("d.contact_id = ?");
-      params.push(parseInt(contactId, 10));
+      params.push(contactId);
     }
 
     const whereSQL = where.length ? " WHERE " + where.join(" AND ") : "";
@@ -668,7 +704,7 @@ const createDeal = createRoute({
       required: true,
       content: { "application/json": { schema: z.object({
         name: z.string().min(1),
-        contact_id: z.union([z.number().int(), z.string()]).nullable().optional(),
+        contact_id: z.string().nullable().optional(),
         value: z.union([z.number(), z.string()]).optional(),
         stage: z.string().optional(),
         close_date: z.string().optional(),
@@ -689,12 +725,13 @@ app.openapi(createDeal, async (c) => {
     const name = body.name.trim();
     if (!name) return c.json({ error: "Name is required" }, 400);
 
-    const contactId = body.contact_id ? parseInt(String(body.contact_id), 10) : null;
+    const contactId = body.contact_id ? String(body.contact_id) : null;
     const value = parseFloat(String(body.value)) || 0;
 
-    const result = await run(
-      "INSERT INTO deals (name, contact_id, value, stage, close_date, notes) VALUES (?, ?, ?, ?, ?, ?)",
-      [name, contactId, value, (body.stage || "prospect").trim(), (body.close_date || "").trim(), (body.notes || "").trim()],
+    const id = crypto.randomUUID();
+    await run(
+      "INSERT INTO deals (id, name, contact_id, value, stage, close_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, name, contactId, value, (body.stage || "prospect").trim(), (body.close_date || "").trim(), (body.notes || "").trim()],
     );
 
     const inserted = await get(
@@ -704,7 +741,7 @@ app.openapi(createDeal, async (c) => {
        LEFT JOIN contacts ct ON d.contact_id = ct.id
        LEFT JOIN companies co ON ct.company_id = co.id
        WHERE d.id = ?`,
-      [result.lastInsertRowid],
+      [id],
     );
     return c.json({ deal: inserted }, 201);
   } catch (err: unknown) {
@@ -723,7 +760,7 @@ const updateDeal = createRoute({
       required: true,
       content: { "application/json": { schema: z.object({
         name: z.string().optional(),
-        contact_id: z.union([z.number().int(), z.string()]).nullable().optional(),
+        contact_id: z.string().nullable().optional(),
         value: z.union([z.number(), z.string()]).optional(),
         stage: z.string().optional(),
         close_date: z.string().optional(),
@@ -741,9 +778,8 @@ const updateDeal = createRoute({
 
 app.openapi(updateDeal, async (c) => {
   try {
-    const { id: idStr } = c.req.valid("param");
-    const id = parseInt(idStr, 10);
-    if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    const { id } = c.req.valid("param");
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const body = c.req.valid("json");
     const fields: string[] = [];
@@ -761,7 +797,7 @@ app.openapi(updateDeal, async (c) => {
     }
     if (body.contact_id !== undefined) {
       fields.push("contact_id = ?");
-      params.push(body.contact_id ? parseInt(String(body.contact_id), 10) : null);
+      params.push(body.contact_id ? String(body.contact_id) : null);
     }
 
     if (fields.length === 0) return c.json({ error: "No fields to update" }, 400);
@@ -771,7 +807,7 @@ app.openapi(updateDeal, async (c) => {
     const result = await run("UPDATE deals SET " + fields.join(", ") + " WHERE id = ?", params);
     if (result.changes === 0) return c.json({ error: "Deal not found" }, 404);
 
-    const updated = await get(
+    const updated = await get<Record<string, unknown>>(
       `SELECT d.*, ct.first_name as contact_first_name, ct.last_name as contact_last_name,
               co.name as company_name, co.domain as company_domain
        FROM deals d
@@ -780,6 +816,24 @@ app.openapi(updateDeal, async (c) => {
        WHERE d.id = ?`,
       [id],
     );
+
+    // Deal just marked won → log it and notify Slack (best-effort, never blocks
+    // the update). Fires only when this request set stage='won'.
+    if (body.stage === "won" && updated) {
+      const value = Number(updated.value) || 0;
+      await logActivity("deal", id, "stage_change", `Deal marked won`, { stage: "won", value });
+      const channel = c.env.SLACK_CHANNEL?.trim();
+      if (channel) {
+        const contact = [updated.contact_first_name, updated.contact_last_name].filter(Boolean).join(" ");
+        const text = `🎉 *Deal won:* ${updated.name} — $${value.toLocaleString()}${contact ? ` (${contact})` : ""}`;
+        try {
+          await notifySlack(c.env, { channel, text });
+          await logActivity("deal", id, "slack", `Notified #${channel} of the win`, { channel });
+        } catch {
+          /* Slack not connected / channel missing — the win is still recorded */
+        }
+      }
+    }
     return c.json({ deal: updated }, 200);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
@@ -802,9 +856,8 @@ const deleteDeal = createRoute({
 
 app.openapi(deleteDeal, async (c) => {
   try {
-    const { id: idStr } = c.req.valid("param");
-    const id = parseInt(idStr, 10);
-    if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    const { id } = c.req.valid("param");
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const result = await run("DELETE FROM deals WHERE id = ?", [id]);
     if (result.changes === 0) return c.json({ error: "Deal not found" }, 404);
@@ -826,7 +879,7 @@ const allCompanies = createRoute({
       description: "All companies (id, name, domain)",
       content: { "application/json": { schema: z.object({
         companies: z.array(z.object({
-          id: z.number().int(),
+          id: z.string(),
           name: z.string(),
           domain: z.string(),
         })),
@@ -855,7 +908,7 @@ const allContacts = createRoute({
       description: "All contacts with company info",
       content: { "application/json": { schema: z.object({
         contacts: z.array(z.object({
-          id: z.number().int(),
+          id: z.string(),
           first_name: z.string(),
           last_name: z.string(),
           company_name: z.string().nullable(),
@@ -874,6 +927,249 @@ app.openapi(allContacts, async (c) => {
        FROM contacts ct LEFT JOIN companies co ON ct.company_id = co.id ORDER BY ct.first_name ASC`,
     );
     return c.json({ contacts }, 200);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// ── Activity timeline ──────────────────────────────────────────────
+// Plain Hono handlers (not createRoute) to keep the integration surface
+// compact; validation is done inline in the same defensive style as above.
+
+const ENTITY_TYPES = ["contact", "company", "deal"];
+
+app.get("/api/activities", async (c) => {
+  try {
+    const entity_type = (c.req.query("entity_type") || "").trim();
+    const entity_id = (c.req.query("entity_id") || "").trim();
+    if (!ENTITY_TYPES.includes(entity_type) || !entity_id) {
+      return c.json({ error: "entity_type and entity_id are required" }, 400);
+    }
+    const activities = await query(
+      "SELECT * FROM activities WHERE entity_type = ? AND entity_id = ? ORDER BY created_at DESC, id DESC",
+      [entity_type, entity_id],
+    );
+    return c.json({ activities }, 200);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+app.post("/api/activities", async (c) => {
+  try {
+    const body = await c.req.json<{ entity_type?: string; entity_id?: string; type?: string; body?: string }>();
+    const entity_type = (body.entity_type || "").trim();
+    const entity_id = (body.entity_id || "").trim();
+    if (!ENTITY_TYPES.includes(entity_type) || !entity_id) {
+      return c.json({ error: "entity_type and entity_id are required" }, 400);
+    }
+    const text = (body.body || "").trim();
+    if (!text) return c.json({ error: "Note body is required" }, 400);
+    await logActivity(entity_type, entity_id, (body.type || "note").trim(), text);
+    return c.json({ ok: true }, 201);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// ── Integrations (Clawnify connections) ────────────────────────────
+
+app.get("/api/integrations/status", async (c) => {
+  try {
+    return c.json(await connectionStatus(c.env), 200);
+  } catch {
+    return c.json({ email: false, meeting: false, slack: false }, 200);
+  }
+});
+
+// Email a contact via connected Gmail, then log it on the contact's timeline.
+app.post("/api/integrations/email", async (c) => {
+  try {
+    const body = await c.req.json<{ contact_id?: string; subject?: string; body?: string }>();
+    const contactId = (body.contact_id || "").trim();
+    const subject = (body.subject || "").trim();
+    const text = (body.body || "").trim();
+    if (!contactId) return c.json({ error: "contact_id is required" }, 400);
+    if (!subject && !text) return c.json({ error: "A subject or body is required" }, 400);
+
+    const contact = await get<{ email: string; first_name: string; last_name: string }>(
+      "SELECT email, first_name, last_name FROM contacts WHERE id = ?",
+      [contactId],
+    );
+    if (!contact) return c.json({ error: "Contact not found" }, 404);
+    if (!contact.email) return c.json({ error: "Contact has no email address" }, 400);
+
+    await sendEmail(c.env, { to: contact.email, subject, body: text });
+    await logActivity("contact", contactId, "email", subject || "(no subject)", { to: contact.email });
+    return c.json({ ok: true }, 200);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Schedule a Google Calendar meeting with a contact, then log it.
+app.post("/api/integrations/meeting", async (c) => {
+  try {
+    const body = await c.req.json<{
+      contact_id?: string;
+      summary?: string;
+      start_datetime?: string;
+      timezone?: string;
+      duration_minutes?: number;
+    }>();
+    const contactId = (body.contact_id || "").trim();
+    const summary = (body.summary || "").trim();
+    const start = (body.start_datetime || "").trim();
+    if (!contactId) return c.json({ error: "contact_id is required" }, 400);
+    if (!summary) return c.json({ error: "A meeting title is required" }, 400);
+    if (!start) return c.json({ error: "A start time is required" }, 400);
+
+    const contact = await get<{ email: string }>("SELECT email FROM contacts WHERE id = ?", [contactId]);
+    if (!contact) return c.json({ error: "Contact not found" }, 404);
+
+    const durationMinutes = Number(body.duration_minutes) || 30;
+    const timezone = (body.timezone || "").trim() || "UTC";
+    await createMeeting(c.env, {
+      summary,
+      startDatetime: start,
+      timezone,
+      durationHour: Math.floor(durationMinutes / 60),
+      durationMinutes: durationMinutes % 60,
+      attendees: contact.email ? [contact.email] : [],
+    });
+    await logActivity("contact", contactId, "meeting", summary, { start, timezone });
+    return c.json({ ok: true }, 200);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// ── Contact import (CSV / XLSX, mapped client-side) ────────────────
+// The client parses the file and maps headers → fields, then posts clean rows
+// here. Company names resolve to ids (reusing existing, creating new), then the
+// contacts are bulk-inserted.
+//
+// This is written set-based, not row-by-row: company lookups use `IN (…)` and
+// inserts use multi-row `VALUES (…),(…)`, chunked to stay under D1's 100
+// bound-parameter cap (the same cap the preview-tier Facet enforces). A 2000-row
+// import is ~150 statements, not ~2400 — it stays well inside the Worker's
+// subrequest/duration budget and goes through @clawnify/db unchanged (so it also
+// works on the DO-Facet preview binding, which has no batch()).
+//
+// Ceiling: chunks are not one atomic transaction (the adapter exposes no
+// batch()/transaction). Companies are created before contacts so a mid-import
+// failure can't orphan a contact's company_id; re-running is safe for companies
+// (deduped by name) but may duplicate contacts. Upgrade to a single transaction
+// if @clawnify/db ever exposes batch().
+
+const CONTACT_STATUSES = ["lead", "active", "inactive", "churned"];
+const CONTACT_COLS = 8; // id,first_name,last_name,email,phone,company_id,title,status
+const CONTACT_CHUNK = Math.floor(100 / CONTACT_COLS); // 12 rows/stmt → 96 params ≤ 100
+const LOOKUP_CHUNK = 100; // one-param `name IN (…)` lookups
+const COMPANY_INSERT_CHUNK = 50; // (id, name) → 2 params/row → 100 params ≤ 100
+
+app.post("/api/contacts/import", async (c) => {
+  try {
+    const body = await c.req.json<{
+      contacts?: Array<{
+        first_name?: string;
+        last_name?: string;
+        email?: string;
+        phone?: string;
+        title?: string;
+        status?: string;
+        company?: string;
+      }>;
+    }>();
+    const rows = Array.isArray(body.contacts) ? body.contacts : [];
+    if (rows.length === 0) return c.json({ error: "No rows to import" }, 400);
+    if (rows.length > 2000) return c.json({ error: "Import is limited to 2000 rows at a time" }, 400);
+
+    // Keep only rows with at least a first name; normalize fields.
+    const clean = rows
+      .map((r) => ({
+        first_name: (r.first_name || "").trim(),
+        last_name: (r.last_name || "").trim(),
+        email: (r.email || "").trim(),
+        phone: (r.phone || "").trim(),
+        title: (r.title || "").trim(),
+        status: CONTACT_STATUSES.includes((r.status || "").trim()) ? (r.status as string).trim() : "lead",
+        company: (r.company || "").trim(),
+      }))
+      .filter((r) => r.first_name);
+    const skipped = rows.length - clean.length;
+    if (clean.length === 0) return c.json({ error: "No rows had a first name to import" }, 400);
+
+    // ── Resolve company names → ids (set-based, case-insensitive) ──
+    // Distinct names, keeping the first-seen original casing for any we create.
+    const nameByKey = new Map<string, string>();
+    for (const r of clean) {
+      const key = r.company.toLowerCase();
+      if (r.company && !nameByKey.has(key)) nameByKey.set(key, r.company);
+    }
+    const companyIds = new Map<string, number>(); // lowercased name → id
+
+    const loadIds = async (names: string[]) => {
+      for (const group of chunk(names, LOOKUP_CHUNK)) {
+        const placeholders = group.map(() => "?").join(", ");
+        const found = await query<{ id: string; name: string }>(
+          `SELECT id, name FROM companies WHERE name COLLATE NOCASE IN (${placeholders})`,
+          group,
+        );
+        for (const co of found) companyIds.set(co.name.toLowerCase(), co.id);
+      }
+    };
+
+    const allNames = [...nameByKey.values()];
+    await loadIds(allNames);
+
+    // Create the ones that don't exist yet (multi-row insert), then reload ids.
+    const missing = [...nameByKey].filter(([key]) => !companyIds.has(key)).map(([, name]) => name);
+    for (const group of chunk(missing, COMPANY_INSERT_CHUNK)) {
+      const placeholders = group.map(() => "(?, ?)").join(", ");
+      const params = group.flatMap((name) => [crypto.randomUUID(), name]);
+      await run(`INSERT INTO companies (id, name) VALUES ${placeholders}`, params);
+    }
+    if (missing.length) await loadIds(missing);
+    const companiesCreated = missing.length;
+
+    // ── Bulk-insert contacts (multi-row VALUES, chunked) ──
+    let imported = 0;
+    for (const group of chunk(clean, CONTACT_CHUNK)) {
+      const placeholders = group.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const params: unknown[] = [];
+      for (const r of group) {
+        const companyId = r.company ? companyIds.get(r.company.toLowerCase()) ?? null : null;
+        params.push(crypto.randomUUID(), r.first_name, r.last_name, r.email, r.phone, companyId, r.title, r.status);
+      }
+      await run(
+        `INSERT INTO contacts (id, first_name, last_name, email, phone, company_id, title, status) VALUES ${placeholders}`,
+        params,
+      );
+      imported += group.length;
+    }
+
+    return c.json({ imported, companiesCreated, skipped }, 200);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// ── Single contact (for deep-linked detail view) ───────────────────
+// Plain handler; the static /api/contacts/all route takes precedence in Hono.
+
+app.get("/api/contacts/:id", async (c) => {
+  try {
+    const id = c.req.param("id");
+    if (!id || id === "all") return c.json({ error: "Not found" }, 404);
+    const contact = await get(
+      `SELECT ct.*, co.name as company_name, co.domain as company_domain
+       FROM contacts ct LEFT JOIN companies co ON ct.company_id = co.id
+       WHERE ct.id = ?`,
+      [id],
+    );
+    if (!contact) return c.json({ error: "Contact not found" }, 404);
+    return c.json({ contact }, 200);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
   }
