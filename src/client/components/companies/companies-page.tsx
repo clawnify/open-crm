@@ -8,10 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { CustomFieldDisplay, readCustom } from "@/lib/custom-fields";
 import type { Company } from "@/types";
 
 export function CompaniesPage() {
-  const { companies, companiesPag, stats, setCompaniesPage, setCompaniesSort, setCompaniesSearch, deleteCompany } = useCrm();
+  const { companies, companiesPag, stats, setCompaniesPage, setCompaniesSort, setCompaniesSearch, deleteCompany, customFields } = useCrm();
+  const companyFields = customFields.filter((d) => d.entity_type === "company");
 
   const [search, setSearch] = useState(companiesPag.search);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -81,6 +83,9 @@ export function CompaniesPage() {
                   <SortHeader col="name" pag={companiesPag} onSort={setCompaniesSort}>Name</SortHeader>
                   <SortHeader col="domain" pag={companiesPag} onSort={setCompaniesSort}>Domain</SortHeader>
                   <SortHeader col="industry" pag={companiesPag} onSort={setCompaniesSort}>Industry</SortHeader>
+                  {companyFields.map((def) => (
+                    <TableHead key={def.id}>{def.label}</TableHead>
+                  ))}
                   <TableHead className="text-right">Contacts</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -112,6 +117,11 @@ export function CompaniesPage() {
                     <TableCell>
                       <CategoryBadge value={c.industry} />
                     </TableCell>
+                    {companyFields.map((def) => (
+                      <TableCell key={def.id}>
+                        <CustomFieldDisplay def={def} value={readCustom(c, def.key)} />
+                      </TableCell>
+                    ))}
                     <TableCell className="text-right">
                       <span className="tabular">{c.contact_count ?? 0}</span>
                     </TableCell>

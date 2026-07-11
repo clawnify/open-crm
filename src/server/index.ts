@@ -2,6 +2,15 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { initDB, query, get, run } from "./db.js";
 import type { CredentialBinding } from "@clawnify/connections";
 import { sendEmail, createMeeting, notifySlack, connectionStatus } from "./integrations.js";
+import {
+  listDefs,
+  createDef,
+  updateDef,
+  deleteDef,
+  coerceCustomValue,
+  isEntityType,
+  type EntityType,
+} from "./custom-fields.js";
 
 // In production Clawnify injects the CREDENTIALS broker binding + CLAWNIFY_ORG_ID
 // whenever clawnify.json declares `app.credentials`. SLACK_CHANNEL is an optional
@@ -40,6 +49,37 @@ async function logActivity(
     /* timeline logging must never break the primary action */
   }
 }
+
+/**
+ * Write custom-property values for one entity row. `custom` is the nested
+ * object from the request body ({ key: value }); only keys with a matching def
+ * are written, each coerced/validated for its type. Runs as a follow-up UPDATE
+ * so the built-in INSERT/UPDATE paths stay untouched. Throws on enum violation.
+ */
+async function applyCustomValues(
+  entity: EntityType,
+  table: string,
+  id: string,
+  custom: Record<string, unknown> | undefined,
+): Promise<void> {
+  if (!custom || typeof custom !== "object") return;
+  const defs = await listDefs(entity);
+  const byKey = new Map(defs.map((d) => [d.key, d]));
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [key, raw] of Object.entries(custom)) {
+    const def = byKey.get(key);
+    if (!def) continue; // ignore unknown keys — only defined properties are writable
+    sets.push(`"${key.replace(/"/g, '""')}" = ?`);
+    params.push(coerceCustomValue(raw, def));
+  }
+  if (sets.length === 0) return;
+  params.push(id);
+  await run(`UPDATE ${table} SET ${sets.join(", ")} WHERE id = ?`, params);
+}
+
+/** Reusable request-body field: the nested bag of custom-property values. */
+const CustomValues = z.record(z.string(), z.any()).optional();
 
 const app = new OpenAPIHono<Env>();
 
@@ -232,6 +272,7 @@ const createCompany = createRoute({
         phone: z.string().optional(),
         email: z.string().optional(),
         notes: z.string().optional(),
+        custom: CustomValues,
       }) } },
     },
   },
@@ -253,6 +294,8 @@ app.openapi(createCompany, async (c) => {
       "INSERT INTO companies (id, name, domain, industry, phone, email, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [id, name, (body.domain || "").trim(), (body.industry || "").trim(), (body.phone || "").trim(), (body.email || "").trim(), (body.notes || "").trim()],
     );
+
+    await applyCustomValues("company", "companies", id, body.custom);
 
     const inserted = await get("SELECT * FROM companies WHERE id = ?", [id]);
     return c.json({ company: inserted }, 201);
@@ -277,6 +320,7 @@ const updateCompany = createRoute({
         phone: z.string().optional(),
         email: z.string().optional(),
         notes: z.string().optional(),
+        custom: CustomValues,
       }) } },
     },
   },
@@ -304,12 +348,18 @@ app.openapi(updateCompany, async (c) => {
       }
     }
 
-    if (fields.length === 0) return c.json({ error: "No fields to update" }, 400);
-    fields.push("updated_at = datetime('now')");
-    params.push(id);
+    const hasCustom = !!body.custom && Object.keys(body.custom).length > 0;
+    if (fields.length === 0 && !hasCustom) return c.json({ error: "No fields to update" }, 400);
 
-    const result = await run("UPDATE companies SET " + fields.join(", ") + " WHERE id = ?", params);
-    if (result.changes === 0) return c.json({ error: "Company not found" }, 404);
+    const exists = await get("SELECT id FROM companies WHERE id = ?", [id]);
+    if (!exists) return c.json({ error: "Company not found" }, 404);
+
+    if (fields.length > 0) {
+      fields.push("updated_at = datetime('now')");
+      params.push(id);
+      await run("UPDATE companies SET " + fields.join(", ") + " WHERE id = ?", params);
+    }
+    await applyCustomValues("company", "companies", id, body.custom);
 
     const updated = await get("SELECT * FROM companies WHERE id = ?", [id]);
     return c.json({ company: updated }, 200);
@@ -445,6 +495,7 @@ const createContact = createRoute({
         company_id: z.string().nullable().optional(),
         title: z.string().optional(),
         status: z.string().optional(),
+        custom: CustomValues,
       }) } },
     },
   },
@@ -468,6 +519,8 @@ app.openapi(createContact, async (c) => {
       "INSERT INTO contacts (id, first_name, last_name, email, phone, company_id, title, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [id, firstName, (body.last_name || "").trim(), (body.email || "").trim(), (body.phone || "").trim(), companyId, (body.title || "").trim(), (body.status || "lead").trim()],
     );
+
+    await applyCustomValues("contact", "contacts", id, body.custom);
 
     const inserted = await get(
       `SELECT ct.*, co.name as company_name, co.domain as company_domain
@@ -498,6 +551,7 @@ const updateContact = createRoute({
         company_id: z.string().nullable().optional(),
         title: z.string().optional(),
         status: z.string().optional(),
+        custom: CustomValues,
       }) } },
     },
   },
@@ -529,12 +583,18 @@ app.openapi(updateContact, async (c) => {
       params.push(body.company_id ? String(body.company_id) : null);
     }
 
-    if (fields.length === 0) return c.json({ error: "No fields to update" }, 400);
-    fields.push("updated_at = datetime('now')");
-    params.push(id);
+    const hasCustom = !!body.custom && Object.keys(body.custom).length > 0;
+    if (fields.length === 0 && !hasCustom) return c.json({ error: "No fields to update" }, 400);
 
-    const result = await run("UPDATE contacts SET " + fields.join(", ") + " WHERE id = ?", params);
-    if (result.changes === 0) return c.json({ error: "Contact not found" }, 404);
+    const exists = await get("SELECT id FROM contacts WHERE id = ?", [id]);
+    if (!exists) return c.json({ error: "Contact not found" }, 404);
+
+    if (fields.length > 0) {
+      fields.push("updated_at = datetime('now')");
+      params.push(id);
+      await run("UPDATE contacts SET " + fields.join(", ") + " WHERE id = ?", params);
+    }
+    await applyCustomValues("contact", "contacts", id, body.custom);
 
     const updated = await get(
       `SELECT ct.*, co.name as company_name, co.domain as company_domain
@@ -709,6 +769,7 @@ const createDeal = createRoute({
         stage: z.string().optional(),
         close_date: z.string().optional(),
         notes: z.string().optional(),
+        custom: CustomValues,
       }) } },
     },
   },
@@ -733,6 +794,8 @@ app.openapi(createDeal, async (c) => {
       "INSERT INTO deals (id, name, contact_id, value, stage, close_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [id, name, contactId, value, (body.stage || "prospect").trim(), (body.close_date || "").trim(), (body.notes || "").trim()],
     );
+
+    await applyCustomValues("deal", "deals", id, body.custom);
 
     const inserted = await get(
       `SELECT d.*, ct.first_name as contact_first_name, ct.last_name as contact_last_name,
@@ -765,6 +828,7 @@ const updateDeal = createRoute({
         stage: z.string().optional(),
         close_date: z.string().optional(),
         notes: z.string().optional(),
+        custom: CustomValues,
       }) } },
     },
   },
@@ -800,12 +864,18 @@ app.openapi(updateDeal, async (c) => {
       params.push(body.contact_id ? String(body.contact_id) : null);
     }
 
-    if (fields.length === 0) return c.json({ error: "No fields to update" }, 400);
-    fields.push("updated_at = datetime('now')");
-    params.push(id);
+    const hasCustom = !!body.custom && Object.keys(body.custom).length > 0;
+    if (fields.length === 0 && !hasCustom) return c.json({ error: "No fields to update" }, 400);
 
-    const result = await run("UPDATE deals SET " + fields.join(", ") + " WHERE id = ?", params);
-    if (result.changes === 0) return c.json({ error: "Deal not found" }, 404);
+    const exists = await get("SELECT id FROM deals WHERE id = ?", [id]);
+    if (!exists) return c.json({ error: "Deal not found" }, 404);
+
+    if (fields.length > 0) {
+      fields.push("updated_at = datetime('now')");
+      params.push(id);
+      await run("UPDATE deals SET " + fields.join(", ") + " WHERE id = ?", params);
+    }
+    await applyCustomValues("deal", "deals", id, body.custom);
 
     const updated = await get<Record<string, unknown>>(
       `SELECT d.*, ct.first_name as contact_first_name, ct.last_name as contact_last_name,
@@ -1173,6 +1243,51 @@ app.get("/api/contacts/:id", async (c) => {
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
   }
+});
+
+// ── Custom properties (field definitions + schema-sync) ────────────
+
+app.get("/api/custom-fields", async (c) => {
+  const entity = c.req.query("entity");
+  if (entity && !isEntityType(entity)) return c.json({ error: "Invalid entity" }, 400);
+  const defs = await listDefs(entity ? (entity as EntityType) : undefined);
+  return c.json({ defs }, 200);
+});
+
+app.post("/api/custom-fields", async (c) => {
+  try {
+    const body = await c.req.json();
+    if (!isEntityType(body.entity_type)) return c.json({ error: "Invalid entity_type" }, 400);
+    if (!body.key || !body.label) return c.json({ error: "key and label are required" }, 400);
+    const def = await createDef({
+      entity_type: body.entity_type,
+      key: String(body.key),
+      label: String(body.label),
+      field_type: body.field_type ?? "string",
+      custom_field: body.custom_field ?? "",
+      options: body.options ?? {},
+      position: body.position ?? 0,
+    });
+    return c.json({ def }, 201);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.put("/api/custom-fields/:id", async (c) => {
+  try {
+    const def = await updateDef(c.req.param("id"), await c.req.json());
+    if (!def) return c.json({ error: "Not found" }, 404);
+    return c.json({ def }, 200);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.delete("/api/custom-fields/:id", async (c) => {
+  const ok = await deleteDef(c.req.param("id"));
+  if (!ok) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true }, 200);
 });
 
 // ── OpenAPI Doc ────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { View, Contact, Company, Deal, Stats, PaginatedState, CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType } from "./types";
+import type { View, Contact, Company, Deal, Stats, PaginatedState, CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType, CustomFieldDef } from "./types";
 
 export interface CrmContextValue {
   isAgent: boolean;
@@ -53,6 +53,10 @@ export interface CrmContextValue {
 
   // Contact import (CSV / XLSX)
   importContacts: (rows: Partial<Contact & { company: string }>[]) => Promise<{ imported: number; companiesCreated: number; skipped: number }>;
+
+  // Custom properties (field definitions, shared across screens)
+  customFields: CustomFieldDef[];
+  refetchCustomFields: () => Promise<void>;
 
   loading: boolean;
   error: string | null;

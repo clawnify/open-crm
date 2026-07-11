@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, type Dispatch, type SetStateAction } 
 import { api } from "../api";
 import type {
   Contact, Company, Deal, Stats, PaginatedState,
-  CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType,
+  CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType, CustomFieldDef,
 } from "../types";
 import type { CrmContextValue } from "../context";
 
@@ -37,6 +37,7 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
   const [companyLookup, setCompanyLookup] = useState<CompanyLookup[]>([]);
   const [contactLookup, setContactLookup] = useState<ContactLookup[]>([]);
   const [connections, setConnections] = useState<ConnectionStatus>({ email: false, meeting: false, slack: false });
+  const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
 
   // ── Fetchers ──
 
@@ -85,6 +86,11 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     }
   }, []);
 
+  const refetchCustomFields = useCallback(async () => {
+    const data = await api<{ defs: CustomFieldDef[] }>("GET", "/api/custom-fields");
+    setCustomFields(data.defs);
+  }, []);
+
   // ── Initial load ──
 
   useEffect(() => {
@@ -94,6 +100,7 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
         await Promise.all([
           fetchStats(), fetchContacts(contactsPag), fetchCompanies(companiesPag),
           fetchDeals(dealsPag), fetchBoardDeals(), fetchLookups(), fetchConnections(),
+          refetchCustomFields(),
         ]);
       } catch (err) {
         setError((err as Error).message);
@@ -228,6 +235,7 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     companyLookup, contactLookup,
     connections, emailContact, scheduleMeeting,
     fetchActivities, addNote, importContacts,
+    customFields, refetchCustomFields,
     loading, error, setError,
   };
 }

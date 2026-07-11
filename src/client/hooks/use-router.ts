@@ -5,6 +5,7 @@ export type Route =
   | { name: "contact"; id: string }
   | { name: "companies" }
   | { name: "deals" }
+  | { name: "properties" }
   | { name: "not-found" };
 
 function parse(path: string): Route {
@@ -13,6 +14,7 @@ function parse(path: string): Route {
   if (m) return { name: "contact", id: decodeURIComponent(m[1]) };
   if (path === "/companies") return { name: "companies" };
   if (path === "/deals") return { name: "deals" };
+  if (path === "/settings/properties") return { name: "properties" };
   return { name: "not-found" };
 }
 

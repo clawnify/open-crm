@@ -8,6 +8,7 @@ import { ContactsPage } from "./components/contacts/contacts-page";
 import { ContactDetail } from "./components/contacts/contact-detail";
 import { CompaniesPage } from "./components/companies/companies-page";
 import { DealsBoard } from "./components/deals/deals-board";
+import { PropertiesPage } from "./components/properties/properties-page";
 
 export function App() {
   const isAgent = document.documentElement.hasAttribute("data-agent");
@@ -28,6 +29,7 @@ export function App() {
               {route.name === "contact" && <ContactDetail id={route.id} navigate={navigate} />}
               {route.name === "companies" && <CompaniesPage />}
               {route.name === "deals" && <DealsBoard />}
+              {route.name === "properties" && <PropertiesPage />}
               {route.name === "not-found" && (
                 <div className="flex flex-1 flex-col items-center justify-center gap-2 p-12 text-center">
                   <h1 className="text-xl font-bold tracking-tight">Not found</h1>

@@ -10,10 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { CustomFieldDisplay, readCustom } from "@/lib/custom-fields";
 import type { Contact } from "@/types";
 
 export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
-  const { contacts, contactsPag, stats, setContactsPage, setContactsSort, setContactsSearch, deleteContact } = useCrm();
+  const { contacts, contactsPag, stats, setContactsPage, setContactsSort, setContactsSearch, deleteContact, customFields } = useCrm();
+  const contactFields = customFields.filter((d) => d.entity_type === "contact");
 
   const [search, setSearch] = useState(contactsPag.search);
   const [importOpen, setImportOpen] = useState(false);
@@ -81,7 +83,17 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
       {contacts.length === 0 ? (
         <EmptyState
           title="No contacts yet. Add your first, or import a CSV/XLSX."
-          action={addButton}
+          action={
+            <div className="flex flex-col items-center gap-2">
+              {addButton}
+              <button
+                onClick={() => navigate("/settings/properties")}
+                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+              >
+                Set up properties
+              </button>
+            </div>
+          }
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -95,6 +107,9 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
                   <TableHead>Company</TableHead>
                   <TableHead>Title</TableHead>
                   <SortHeader col="status" pag={contactsPag} onSort={setContactsSort}>Status</SortHeader>
+                  {contactFields.map((def) => (
+                    <TableHead key={def.id}>{def.label}</TableHead>
+                  ))}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -141,6 +156,11 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
                       <TableCell>
                         <CategoryBadge value={c.status} />
                       </TableCell>
+                      {contactFields.map((def) => (
+                        <TableCell key={def.id}>
+                          <CustomFieldDisplay def={def} value={readCustom(c, def.key)} />
+                        </TableCell>
+                      ))}
                       <TableCell>
                         <div className="flex items-center justify-end gap-1">
                           <Button

@@ -12,6 +12,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { CustomFieldInput, readCustom } from "@/lib/custom-fields";
 import type { Contact } from "@/types";
 
 const STATUSES = ["lead", "active", "inactive", "churned"] as const;
@@ -51,13 +52,19 @@ export function ContactDialog({
   onOpenChange: (open: boolean) => void;
   contact?: Contact;
 }) {
-  const { companyLookup, addContact, updateContact, setError } = useCrm();
+  const { companyLookup, addContact, updateContact, setError, customFields } = useCrm();
+  const contactFields = customFields.filter((d) => d.entity_type === "contact");
   const [form, setForm] = useState<FormState>(() => toForm(contact));
+  const [custom, setCustom] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
 
   // Reset the form each time the dialog opens (create vs edit).
   useEffect(() => {
-    if (open) setForm(toForm(contact));
+    if (open) {
+      setForm(toForm(contact));
+      setCustom(Object.fromEntries(contactFields.map((d) => [d.key, readCustom(contact, d.key) ?? ""])));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contact]);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -75,6 +82,7 @@ export function ContactDialog({
         company_id: form.company_id === "" ? null : form.company_id,
         title: form.title.trim(),
         status: form.status,
+        custom,
       };
       if (contact) await updateContact(contact.id, data);
       else await addContact(data);
@@ -164,6 +172,19 @@ export function ContactDialog({
               </SelectContent>
             </Select>
           </div>
+
+          {contactFields.length > 0 && (
+            <>
+              <div className="eyebrow">Custom</div>
+              {contactFields.map((def) => (
+                <div key={def.id} className="flex flex-col gap-1.5">
+                  <Label>{def.label}</Label>
+                  <CustomFieldInput def={def} value={custom[def.key]}
+                    onChange={(v) => setCustom((c) => ({ ...c, [def.key]: v }))} />
+                </div>
+              ))}
+            </>
+          )}
 
           <DialogFooter>
             <DialogClose asChild>
