@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, type Dispatch, type SetStateAction } 
 import { api } from "../api";
 import type {
   Contact, Company, Deal, Stats, PaginatedState,
-  CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType, CustomFieldDef,
+  CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType, CustomFieldDef, ImportRow,
 } from "../types";
 import type { CrmContextValue } from "../context";
 
@@ -218,7 +218,7 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
 
   // ── Contact import ──
 
-  const importContacts = useCallback(async (rows: Partial<Contact & { company: string }>[]) => {
+  const importContacts = useCallback(async (rows: ImportRow[]) => {
     const res = await api<{ imported: number; companiesCreated: number; skipped: number }>("POST", "/api/contacts/import", { contacts: rows });
     await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
     return res;

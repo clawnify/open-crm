@@ -1149,6 +1149,9 @@ app.post("/api/contacts/import", async (c) => {
         title?: string;
         status?: string;
         company?: string;
+        company_domain?: string;
+        company_industry?: string;
+        company_phone?: string;
       }>;
     }>();
     const rows = Array.isArray(body.contacts) ? body.contacts : [];
@@ -1165,6 +1168,9 @@ app.post("/api/contacts/import", async (c) => {
         title: (r.title || "").trim(),
         status: CONTACT_STATUSES.includes((r.status || "").trim()) ? (r.status as string).trim() : "lead",
         company: (r.company || "").trim(),
+        company_domain: (r.company_domain || "").trim(),
+        company_industry: (r.company_industry || "").trim(),
+        company_phone: (r.company_phone || "").trim(),
       }))
       .filter((r) => r.first_name);
     const skipped = rows.length - clean.length;
@@ -1172,10 +1178,22 @@ app.post("/api/contacts/import", async (c) => {
 
     // ── Resolve company names → ids (set-based, case-insensitive) ──
     // Distinct names, keeping the first-seen original casing for any we create.
-    const nameByKey = new Map<string, string>();
+    // Company attributes (domain/industry/phone) are captured from the first
+    // row that carries each one, so a new company lands fully populated instead
+    // of as a name-only stub.
+    type CompanyDraft = { name: string; domain: string; industry: string; phone: string };
+    const nameByKey = new Map<string, CompanyDraft>();
     for (const r of clean) {
+      if (!r.company) continue;
       const key = r.company.toLowerCase();
-      if (r.company && !nameByKey.has(key)) nameByKey.set(key, r.company);
+      const existing = nameByKey.get(key);
+      if (!existing) {
+        nameByKey.set(key, { name: r.company, domain: r.company_domain, industry: r.company_industry, phone: r.company_phone });
+      } else {
+        if (!existing.domain) existing.domain = r.company_domain;
+        if (!existing.industry) existing.industry = r.company_industry;
+        if (!existing.phone) existing.phone = r.company_phone;
+      }
     }
     const companyIds = new Map<string, number>(); // lowercased name → id
 
@@ -1190,17 +1208,19 @@ app.post("/api/contacts/import", async (c) => {
       }
     };
 
-    const allNames = [...nameByKey.values()];
+    const allNames = [...nameByKey.values()].map((co) => co.name);
     await loadIds(allNames);
 
     // Create the ones that don't exist yet (multi-row insert), then reload ids.
-    const missing = [...nameByKey].filter(([key]) => !companyIds.has(key)).map(([, name]) => name);
+    // Existing companies are reused untouched — dedupe-by-name wins, so we never
+    // overwrite an established company's attributes from an import.
+    const missing = [...nameByKey].filter(([key]) => !companyIds.has(key)).map(([, co]) => co);
     for (const group of chunk(missing, COMPANY_INSERT_CHUNK)) {
-      const placeholders = group.map(() => "(?, ?)").join(", ");
-      const params = group.flatMap((name) => [crypto.randomUUID(), name]);
-      await run(`INSERT INTO companies (id, name) VALUES ${placeholders}`, params);
+      const placeholders = group.map(() => "(?, ?, ?, ?, ?)").join(", ");
+      const params = group.flatMap((co) => [crypto.randomUUID(), co.name, co.domain, co.industry, co.phone]);
+      await run(`INSERT INTO companies (id, name, domain, industry, phone) VALUES ${placeholders}`, params);
     }
-    if (missing.length) await loadIds(missing);
+    if (missing.length) await loadIds(missing.map((co) => co.name));
     const companiesCreated = missing.length;
 
     // ── Bulk-insert contacts (multi-row VALUES, chunked) ──

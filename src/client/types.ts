@@ -120,11 +120,11 @@ export interface ConnectionStatus {
   slack: boolean;
 }
 
-// A single row parsed from an uploaded CSV/XLSX, keyed by header.
-export type ImportRow = Record<string, string>;
-
-// The contact fields an uploaded column can map to. "full_name" is a virtual
-// target that splits on the first space into first/last name.
+// The fields an uploaded column can map to. "full_name" is a virtual target
+// that splits on the first space into first/last name. The "company_*" targets
+// carry attributes for the company that gets created/deduped from the "company"
+// column, so a new company lands with its domain/industry/phone instead of a
+// name-only stub.
 export type ImportField =
   | "first_name"
   | "last_name"
@@ -134,4 +134,16 @@ export type ImportField =
   | "title"
   | "status"
   | "company"
+  | "company_domain"
+  | "company_industry"
+  | "company_phone"
   | "";
+
+// A row handed to importContacts: contact fields plus the flat company columns
+// resolved server-side into a deduped company.
+export type ImportRow = Partial<Contact> & {
+  company?: string;
+  company_domain?: string;
+  company_industry?: string;
+  company_phone?: string;
+};
