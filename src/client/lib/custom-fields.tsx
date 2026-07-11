@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { Gauge, Tag, Link2, AtSign, Phone as PhoneIcon, Tags as TagsIcon, Hash, Type, ToggleLeft, Calendar, List, X, ExternalLink } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { cn, colorClasses, categoryToken, type ColorToken } from "@/lib/utils";
 import { api } from "@/api";
@@ -226,6 +227,43 @@ function TagsInput({ value, onChange }: { value: unknown; onChange: (v: unknown)
         onBlur={() => add(draft)} placeholder={tags.length ? "" : "Add a tag…"}
         className="min-w-[80px] flex-1 bg-transparent text-sm outline-none" />
     </div>
+  );
+}
+
+// ── Dialog section (shared by every entity dialog) ────────────────────
+
+/** Fields that need the full dialog width rather than a grid cell. */
+function isFullWidth(def: CustomFieldDef): boolean {
+  return def.custom_field === "clawnify::tags.tags" || def.field_type === "text";
+}
+
+/**
+ * The "Custom" block rendered in an entity dialog: a 2-column grid matching the
+ * built-in fields, with tags / long-text spanning full width. `values` is the
+ * key→value map; `onChange(key, value)` updates one field.
+ */
+export function CustomFieldsSection({
+  defs,
+  values,
+  onChange,
+}: {
+  defs: CustomFieldDef[];
+  values: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+}) {
+  if (defs.length === 0) return null;
+  return (
+    <>
+      <div className="eyebrow">Custom</div>
+      <div className="grid grid-cols-2 gap-3">
+        {defs.map((def) => (
+          <div key={def.id} className={cn("flex flex-col gap-1.5", isFullWidth(def) && "col-span-2")}>
+            <Label>{def.label}</Label>
+            <CustomFieldInput def={def} value={values[def.key]} onChange={(v) => onChange(def.key, v)} />
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
