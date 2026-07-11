@@ -12,7 +12,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { CustomFieldInput, readCustom } from "@/lib/custom-fields";
+import { CustomFieldsSection, readCustom } from "@/lib/custom-fields";
 import type { Contact } from "@/types";
 
 const STATUSES = ["lead", "active", "inactive", "churned"] as const;
@@ -173,18 +173,8 @@ export function ContactDialog({
             </Select>
           </div>
 
-          {contactFields.length > 0 && (
-            <>
-              <div className="eyebrow">Custom</div>
-              {contactFields.map((def) => (
-                <div key={def.id} className="flex flex-col gap-1.5">
-                  <Label>{def.label}</Label>
-                  <CustomFieldInput def={def} value={custom[def.key]}
-                    onChange={(v) => setCustom((c) => ({ ...c, [def.key]: v }))} />
-                </div>
-              ))}
-            </>
-          )}
+          <CustomFieldsSection defs={contactFields} values={custom}
+            onChange={(key, v) => setCustom((c) => ({ ...c, [key]: v }))} />
 
           <DialogFooter>
             <DialogClose asChild>

@@ -13,7 +13,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { CustomFieldInput, readCustom } from "@/lib/custom-fields";
+import { CustomFieldsSection, readCustom } from "@/lib/custom-fields";
 import type { Deal } from "@/types";
 
 const STAGES = ["prospect", "qualified", "proposal", "negotiation", "won", "lost"] as const;
@@ -171,18 +171,8 @@ export function DealDialog({
             <Textarea id="notes" value={form.notes} onChange={(e) => set("notes", e.target.value)} />
           </div>
 
-          {dealFields.length > 0 && (
-            <>
-              <div className="eyebrow">Custom</div>
-              {dealFields.map((def) => (
-                <div key={def.id} className="flex flex-col gap-1.5">
-                  <Label>{def.label}</Label>
-                  <CustomFieldInput def={def} value={custom[def.key]}
-                    onChange={(v) => setCustom((cst) => ({ ...cst, [def.key]: v }))} />
-                </div>
-              ))}
-            </>
-          )}
+          <CustomFieldsSection defs={dealFields} values={custom}
+            onChange={(key, v) => setCustom((cst) => ({ ...cst, [key]: v }))} />
 
           <DialogFooter>
             <DialogClose asChild>

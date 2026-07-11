@@ -13,7 +13,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { CustomFieldInput, readCustom } from "@/lib/custom-fields";
+import { CustomFieldsSection, readCustom } from "@/lib/custom-fields";
 import type { Company } from "@/types";
 
 const INDUSTRIES = [
@@ -163,18 +163,8 @@ export function CompanyDialog({
             <Textarea id="notes" value={form.notes} onChange={(e) => set("notes", e.target.value)} />
           </div>
 
-          {companyFields.length > 0 && (
-            <>
-              <div className="eyebrow">Custom</div>
-              {companyFields.map((def) => (
-                <div key={def.id} className="flex flex-col gap-1.5">
-                  <Label>{def.label}</Label>
-                  <CustomFieldInput def={def} value={custom[def.key]}
-                    onChange={(v) => setCustom((cst) => ({ ...cst, [def.key]: v }))} />
-                </div>
-              ))}
-            </>
-          )}
+          <CustomFieldsSection defs={companyFields} values={custom}
+            onChange={(key, v) => setCustom((cst) => ({ ...cst, [key]: v }))} />
 
           <DialogFooter>
             <DialogClose asChild>
