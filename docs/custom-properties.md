@@ -146,9 +146,28 @@ mapped from `domain`/`website`/`industry`/`sector` headers; `Company phone` is
 manual-only so a bare `Phone` column stays the contact's). A **newly created**
 company lands with those attributes filled from the first row that carries each
 one; an **existing** company is reused untouched — dedupe-by-name wins, so an
-import never overwrites an established company. Email-domain–based association
-(HubSpot's mechanism) stays out of v1 for the reasons in #3 (maintained free-email
-exclusion list); opt-in if ever built.
+import never overwrites an established company.
+
+### 7b. Company association from work-email domains (shipped, opt-in)
+
+HubSpot's mechanism — derive/associate a company from a contact's email domain
+(`sandra@example.com` → company `example.com`) — is now supported, **opt-in per
+import** via a checkbox (default off; auto-creating companies is invasive, so it's
+explicit and only offered when an email column is mapped and no Company column is).
+
+The cost that kept this out of the first slice — a maintained free-email exclusion
+list — turned out to be **solved reference data, not hand-curation**: the
+`free-email-domains` package (~12.8k providers, zero deps, pure JSON) is loaded
+once into a `Set`, so a personal-provider email never spawns a "Gmail" company and
+the list stays current via dependency bumps. Per import, distinct non-freemail
+domains are resolved set-based (same shape as the name path): match an existing
+company by `domain` first — including one the name phase just created, so a mapped
+`Acme`/`acme.com` absorbs an `@acme.com` contact — else create a company named from
+the domain (`acme.com` → "Acme", editable). The freemail fallback (HubSpot checks a
+contact's Website URL when the email is a free provider) is skipped — import rows
+carry no website field. A persistent org-level toggle and user-editable exclusions
+are the natural next step *if* live per-contact association (outside import) is added;
+the resolver is a shared helper, so that reuse is a one-liner.
 
 ## 8. Scope boundaries (opinionated)
 

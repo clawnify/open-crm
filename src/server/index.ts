@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import freemailDomains from "free-email-domains";
 import { initDB, query, get, run } from "./db.js";
 import type { CredentialBinding } from "@clawnify/connections";
 import { sendEmail, createMeeting, notifySlack, connectionStatus } from "./integrations.js";
@@ -1136,7 +1137,32 @@ const CONTACT_STATUSES = ["lead", "active", "inactive", "churned"];
 const CONTACT_COLS = 8; // id,first_name,last_name,email,phone,company_id,title,status
 const CONTACT_CHUNK = Math.floor(100 / CONTACT_COLS); // 12 rows/stmt → 96 params ≤ 100
 const LOOKUP_CHUNK = 100; // one-param `name IN (…)` lookups
-const COMPANY_INSERT_CHUNK = 50; // (id, name) → 2 params/row → 100 params ≤ 100
+// Widest company insert is (id, name, domain, industry, phone) = 5 params/row.
+// D1 caps bound parameters at 100 per query, so chunk at 100/5 = 20 rows.
+const COMPANY_COLS = 5;
+const COMPANY_INSERT_CHUNK = Math.floor(100 / COMPANY_COLS); // 20 rows/stmt → 100 params ≤ 100
+
+// Personal/free email providers (gmail, outlook, …) — a company is never
+// inferred from these, else every import would spawn a "Gmail" company. Sourced
+// from the maintained `free-email-domains` list (~12.8k domains) so it stays
+// current via dependency bumps rather than hand-curation.
+const FREEMAIL_DOMAINS = new Set(freemailDomains.map((d) => d.toLowerCase()));
+
+// The domain of a work email, or "" if it has none or is a free provider.
+function workEmailDomain(email: string): string {
+  const at = email.lastIndexOf("@");
+  if (at < 0) return "";
+  const domain = email.slice(at + 1).trim().toLowerCase();
+  if (!domain || !domain.includes(".")) return "";
+  return FREEMAIL_DOMAINS.has(domain) ? "" : domain;
+}
+
+// A first-guess company name from a domain: "acme.com" → "Acme". Crude but
+// editable post-import, matching how HubSpot seeds domain-derived companies.
+function companyNameFromDomain(domain: string): string {
+  const label = domain.replace(/^www\./, "").split(".")[0] || domain;
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
 
 app.post("/api/contacts/import", async (c) => {
   try {
@@ -1153,25 +1179,36 @@ app.post("/api/contacts/import", async (c) => {
         company_industry?: string;
         company_phone?: string;
       }>;
+      // Opt-in: infer/associate a company from each contact's work-email domain
+      // when the row has no explicit company column.
+      inferCompanyFromEmail?: boolean;
     }>();
     const rows = Array.isArray(body.contacts) ? body.contacts : [];
     if (rows.length === 0) return c.json({ error: "No rows to import" }, 400);
     if (rows.length > 2000) return c.json({ error: "Import is limited to 2000 rows at a time" }, 400);
+    const inferFromEmail = body.inferCompanyFromEmail === true;
 
-    // Keep only rows with at least a first name; normalize fields.
+    // Keep only rows with at least a first name; normalize fields. `inferDomain`
+    // is the work-email domain to build a company from — set only when opted in,
+    // the row has no explicit company, and the email domain isn't a free provider.
     const clean = rows
-      .map((r) => ({
-        first_name: (r.first_name || "").trim(),
-        last_name: (r.last_name || "").trim(),
-        email: (r.email || "").trim(),
-        phone: (r.phone || "").trim(),
-        title: (r.title || "").trim(),
-        status: CONTACT_STATUSES.includes((r.status || "").trim()) ? (r.status as string).trim() : "lead",
-        company: (r.company || "").trim(),
-        company_domain: (r.company_domain || "").trim(),
-        company_industry: (r.company_industry || "").trim(),
-        company_phone: (r.company_phone || "").trim(),
-      }))
+      .map((r) => {
+        const email = (r.email || "").trim();
+        const company = (r.company || "").trim();
+        return {
+          first_name: (r.first_name || "").trim(),
+          last_name: (r.last_name || "").trim(),
+          email,
+          phone: (r.phone || "").trim(),
+          title: (r.title || "").trim(),
+          status: CONTACT_STATUSES.includes((r.status || "").trim()) ? (r.status as string).trim() : "lead",
+          company,
+          company_domain: (r.company_domain || "").trim(),
+          company_industry: (r.company_industry || "").trim(),
+          company_phone: (r.company_phone || "").trim(),
+          inferDomain: inferFromEmail && !company && email ? workEmailDomain(email) : "",
+        };
+      })
       .filter((r) => r.first_name);
     const skipped = rows.length - clean.length;
     if (clean.length === 0) return c.json({ error: "No rows had a first name to import" }, 400);
@@ -1221,7 +1258,39 @@ app.post("/api/contacts/import", async (c) => {
       await run(`INSERT INTO companies (id, name, domain, industry, phone) VALUES ${placeholders}`, params);
     }
     if (missing.length) await loadIds(missing.map((co) => co.name));
-    const companiesCreated = missing.length;
+
+    // ── Infer companies from work-email domains (opt-in) ──
+    // Runs after the name phase so a domain match can land on a company that
+    // phase just created (e.g. a mapped "Acme" with domain acme.com absorbs a
+    // contact whose email is @acme.com). Existing companies match by domain
+    // first; unmatched domains create a company named from the domain.
+    const domainSet = new Set<string>();
+    for (const r of clean) if (r.inferDomain) domainSet.add(r.inferDomain);
+
+    const companyIdByDomain = new Map<string, string>(); // domain (lower) → id (UUID)
+    const loadIdsByDomain = async (domainsList: string[]) => {
+      for (const group of chunk(domainsList, LOOKUP_CHUNK)) {
+        const placeholders = group.map(() => "?").join(", ");
+        const found = await query<{ id: string; domain: string }>(
+          `SELECT id, domain FROM companies WHERE domain <> '' AND domain COLLATE NOCASE IN (${placeholders})`,
+          group,
+        );
+        for (const co of found) if (co.domain) companyIdByDomain.set(co.domain.toLowerCase(), co.id);
+      }
+    };
+
+    const allDomains = [...domainSet];
+    if (allDomains.length) await loadIdsByDomain(allDomains);
+
+    const missingDomains = allDomains.filter((d) => !companyIdByDomain.has(d));
+    for (const group of chunk(missingDomains, COMPANY_INSERT_CHUNK)) {
+      const placeholders = group.map(() => "(?, ?, ?)").join(", ");
+      const params = group.flatMap((d) => [crypto.randomUUID(), companyNameFromDomain(d), d]);
+      await run(`INSERT INTO companies (id, name, domain) VALUES ${placeholders}`, params);
+    }
+    if (missingDomains.length) await loadIdsByDomain(missingDomains);
+
+    const companiesCreated = missing.length + missingDomains.length;
 
     // ── Bulk-insert contacts (multi-row VALUES, chunked) ──
     let imported = 0;
@@ -1229,7 +1298,11 @@ app.post("/api/contacts/import", async (c) => {
       const placeholders = group.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
       const params: unknown[] = [];
       for (const r of group) {
-        const companyId = r.company ? companyIds.get(r.company.toLowerCase()) ?? null : null;
+        const companyId = r.company
+          ? companyIds.get(r.company.toLowerCase()) ?? null
+          : r.inferDomain
+            ? companyIdByDomain.get(r.inferDomain) ?? null
+            : null;
         params.push(crypto.randomUUID(), r.first_name, r.last_name, r.email, r.phone, companyId, r.title, r.status);
       }
       await run(

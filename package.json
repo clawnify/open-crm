@@ -24,6 +24,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
+    "free-email-domains": "^1.9.62",
     "hono": "^4.6.0",
     "lucide-react": "^0.575.0",
     "react": "^19.0.0",

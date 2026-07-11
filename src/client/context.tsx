@@ -52,7 +52,7 @@ export interface CrmContextValue {
   addNote: (entityType: EntityType, entityId: string, body: string) => Promise<void>;
 
   // Contact import (CSV / XLSX)
-  importContacts: (rows: ImportRow[]) => Promise<{ imported: number; companiesCreated: number; skipped: number }>;
+  importContacts: (rows: ImportRow[], opts?: { inferCompanyFromEmail?: boolean }) => Promise<{ imported: number; companiesCreated: number; skipped: number }>;
 
   // Custom properties (field definitions, shared across screens)
   customFields: CustomFieldDef[];
