@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Upload, FileSpreadsheet, CheckCircle2, ArrowLeft } from "lucide-react";
 import { useCrm } from "@/context";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,18 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import type { ImportField, ImportRow } from "@/types";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+  SelectGroup,
+  SelectLabel,
+  SelectSeparator,
+} from "@/components/ui/select";
+import type { EntityImportConfig } from "@/lib/import-config";
+import type { ImportResult, ImportRow } from "@/types";
 
 type Step = "upload" | "map" | "done";
 
@@ -19,69 +29,78 @@ interface Parsed {
   rows: string[][];
 }
 
-interface ImportResult {
-  imported: number;
-  companiesCreated: number;
-  skipped: number;
-}
-
-// Radix Select items cannot use an empty-string value, so the "Skip" option uses
-// this sentinel and is treated as "" everywhere in the mapping logic.
+// Radix Select items cannot use an empty-string value, so "Skip" uses this
+// sentinel and is treated as "" everywhere in the mapping logic. Custom-field
+// targets are prefixed so they're distinguishable from built-in payload keys.
 const SKIP = "__skip__";
-
-const FIELD_OPTIONS: { label: string; value: string }[] = [
-  { label: "— Skip —", value: SKIP },
-  { label: "Full name (split)", value: "full_name" },
-  { label: "First name", value: "first_name" },
-  { label: "Last name", value: "last_name" },
-  { label: "Email", value: "email" },
-  { label: "Phone", value: "phone" },
-  { label: "Title", value: "title" },
-  { label: "Company", value: "company" },
-  { label: "Company domain", value: "company_domain" },
-  { label: "Company industry", value: "company_industry" },
-  { label: "Company phone", value: "company_phone" },
-  { label: "Status", value: "status" },
-];
+const CUSTOM_PREFIX = "custom:";
 
 const norm = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
-const EXACT: Record<string, ImportField> = {
-  firstname: "first_name", first: "first_name", givenname: "first_name", forename: "first_name", fname: "first_name",
-  lastname: "last_name", last: "last_name", surname: "last_name", familyname: "last_name", lname: "last_name",
-  fullname: "full_name", name: "full_name", contactname: "full_name",
-  email: "email", emailaddress: "email", mail: "email", primaryemail: "email",
-  phone: "phone", phonenumber: "phone", mobile: "phone", mobilephone: "phone", cell: "phone", telephone: "phone", tel: "phone",
-  title: "title", jobtitle: "title", role: "title", position: "title",
-  company: "company", companyname: "company", organization: "company", organisation: "company", account: "company", employer: "company",
-  companydomain: "company_domain", domain: "company_domain", website: "company_domain", companywebsite: "company_domain",
-  industry: "company_industry", companyindustry: "company_industry", sector: "company_industry", vertical: "company_industry",
-  status: "status", stage: "status", lifecyclestage: "status",
-};
-const FUZZY: [RegExp, ImportField][] = [
-  [/^(first|given|fore)name/, "first_name"],
-  [/^(last|sur|family)name/, "last_name"],
-  [/^phone|phone$|mobile|^cell/, "phone"],
-  [/^email|email$/, "email"],
-  [/company|organi|employer/, "company"],
-  [/domain|website/, "company_domain"],
-  [/industry|sector/, "company_industry"],
-  [/jobtitle|^title$|position/, "title"],
-];
-function autoMap(headers: string[]): ImportField[] {
-  const result: ImportField[] = headers.map(() => "");
-  const used = new Set<ImportField>();
-  headers.forEach((h, i) => { const f = EXACT[norm(h)]; if (f && !used.has(f)) { result[i] = f; used.add(f); } });
-  headers.forEach((h, i) => { if (result[i]) return; const n = norm(h); for (const [re, f] of FUZZY) { if (re.test(n) && !used.has(f)) { result[i] = f; used.add(f); break; } } });
+
+function autoMap(
+  headers: string[],
+  config: EntityImportConfig,
+  customFields: { key: string; label: string }[],
+): string[] {
+  const result: string[] = headers.map(() => "");
+  const used = new Set<string>();
+  // 1. exact built-in header match
+  headers.forEach((h, i) => {
+    const f = config.exact[norm(h)];
+    if (f && !used.has(f)) {
+      result[i] = f;
+      used.add(f);
+    }
+  });
+  // 2. custom field whose key or label matches the header
+  headers.forEach((h, i) => {
+    if (result[i]) return;
+    const n = norm(h);
+    for (const d of customFields) {
+      const target = CUSTOM_PREFIX + d.key;
+      if (used.has(target)) continue;
+      if (n === norm(d.key) || n === norm(d.label)) {
+        result[i] = target;
+        used.add(target);
+        break;
+      }
+    }
+  });
+  // 3. fuzzy built-in fallback
+  headers.forEach((h, i) => {
+    if (result[i]) return;
+    const n = norm(h);
+    for (const [re, f] of config.fuzzy) {
+      if (re.test(n) && !used.has(f)) {
+        result[i] = f;
+        used.add(f);
+        break;
+      }
+    }
+  });
   return result;
 }
 
-export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { importContacts, setError } = useCrm();
+export function ImportDialog({
+  open,
+  onOpenChange,
+  config,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  config: EntityImportConfig;
+}) {
+  const { importEntity, setError, customFields } = useCrm();
+  const entityDefs = useMemo(
+    () => customFields.filter((d) => d.entity_type === config.entity),
+    [customFields, config.entity],
+  );
+
   const [step, setStep] = useState<Step>("upload");
   const [busy, setBusy] = useState(false);
   const [fileName, setFileName] = useState("");
   const [parsed, setParsed] = useState<Parsed | null>(null);
-  const [mapping, setMapping] = useState<ImportField[]>([]);
+  const [mapping, setMapping] = useState<string[]>([]);
   const [inferCompanies, setInferCompanies] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
@@ -112,12 +131,12 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
       const wb = XLSX.read(buf, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const grid = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: "" });
-      const nonEmpty = grid.filter((r) => r.some((c) => String(c).trim() !== ""));
+      const nonEmpty = grid.filter((r) => r.some((cell) => String(cell).trim() !== ""));
       if (nonEmpty.length < 2) throw new Error("File needs a header row and at least one data row");
       const headers = nonEmpty[0].map((h) => String(h).trim());
       const rows = nonEmpty.slice(1).map((r) => headers.map((_, i) => String(r[i] ?? "")));
       setParsed({ headers, rows });
-      setMapping(autoMap(headers));
+      setMapping(autoMap(headers, config, entityDefs));
       setStep("map");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not read the file");
@@ -134,34 +153,41 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
     setStep("upload");
   }
 
-  const hasName = mapping.some((f) => f === "first_name" || f === "full_name");
-  // Domain inference needs an email column but no explicit company mapping to be
-  // useful (a mapped Company column already resolves those rows).
-  const hasEmail = mapping.some((f) => f === "email");
-  const hasCompany = mapping.some((f) => f === "company");
-  const canInfer = hasEmail && !hasCompany;
+  const hasRequired = config.hasRequired(mapping);
+  // Company inference needs an email column but no explicit company mapping to
+  // be useful (a mapped Company column already resolves those rows).
+  const canInfer =
+    config.supportsCompanyInference === true &&
+    mapping.some((f) => f === "email") &&
+    !mapping.some((f) => f === "company");
 
   async function onImport() {
     if (!parsed) return;
     setBusy(true);
     try {
-      const contacts = parsed.rows.map((row) => {
+      const rows: ImportRow[] = parsed.rows.map((row) => {
         const out: ImportRow = {};
+        const custom: Record<string, unknown> = {};
         parsed.headers.forEach((_, i) => {
-          const field = mapping[i];
+          const target = mapping[i];
           const val = (row[i] || "").trim();
-          if (!field || !val) return;
-          if (field === "full_name") {
+          if (!target || !val) return;
+          if (target === "full_name") {
             const [first, ...rest] = val.split(/\s+/);
-            out.first_name = out.first_name || first;
+            if (!out.first_name) out.first_name = first;
             if (rest.length && !out.last_name) out.last_name = rest.join(" ");
+          } else if (target.startsWith(CUSTOM_PREFIX)) {
+            custom[target.slice(CUSTOM_PREFIX.length)] = val;
           } else {
-            (out as Record<string, string>)[field] = val;
+            out[target] = val;
           }
         });
+        if (Object.keys(custom).length) out.custom = custom;
         return out;
       });
-      const res = await importContacts(contacts, { inferCompanyFromEmail: canInfer && inferCompanies });
+      const res = await importEntity(config.entity, rows, {
+        inferCompanyFromEmail: canInfer && inferCompanies,
+      });
       setResult(res);
       setStep("done");
     } catch (err) {
@@ -177,7 +203,7 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileSpreadsheet className="size-5 text-muted-foreground" />
-            Import contacts
+            {config.title}
           </DialogTitle>
         </DialogHeader>
 
@@ -207,15 +233,16 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
         {step === "map" && parsed && (
           <div className="flex flex-col gap-4">
             <p className="text-sm text-muted-foreground">
-              Map columns from {fileName} ({parsed.rows.length} {parsed.rows.length === 1 ? "row" : "rows"}). Set at
-              least one column to First name or Full name.
+              Map columns from {fileName} ({parsed.rows.length} {parsed.rows.length === 1 ? "row" : "rows"}).
             </p>
 
             <div className="flex max-h-[45vh] flex-col gap-2 overflow-y-auto pr-1">
               {parsed.headers.map((header, i) => (
                 <div key={i} className="grid grid-cols-2 items-center gap-3">
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{header || <span className="text-muted-foreground">Column {i + 1}</span>}</div>
+                    <div className="truncate text-sm font-medium">
+                      {header || <span className="text-muted-foreground">Column {i + 1}</span>}
+                    </div>
                     <div className="truncate text-xs text-muted-foreground">{parsed.rows[0]?.[i] || "—"}</div>
                   </div>
                   <Select
@@ -223,7 +250,7 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
                     onValueChange={(v) =>
                       setMapping((m) => {
                         const next = [...m];
-                        next[i] = (v === SKIP ? "" : v) as ImportField;
+                        next[i] = v === SKIP ? "" : v;
                         return next;
                       })
                     }
@@ -232,11 +259,25 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {FIELD_OPTIONS.map((o) => (
+                      <SelectItem value={SKIP}>— Skip —</SelectItem>
+                      {config.fields.map((o) => (
                         <SelectItem key={o.value} value={o.value}>
                           {o.label}
                         </SelectItem>
                       ))}
+                      {entityDefs.length > 0 && (
+                        <>
+                          <SelectSeparator />
+                          <SelectGroup>
+                            <SelectLabel>Custom fields</SelectLabel>
+                            {entityDefs.map((d) => (
+                              <SelectItem key={d.key} value={CUSTOM_PREFIX + d.key}>
+                                {d.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -267,15 +308,13 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
                   <ArrowLeft className="size-4" />
                   Back
                 </Button>
-                <Button type="button" size="sm" onClick={onImport} disabled={busy || !hasName}>
-                  {busy ? "Importing…" : `Import ${parsed.rows.length} ${parsed.rows.length === 1 ? "contact" : "contacts"}`}
+                <Button type="button" size="sm" onClick={onImport} disabled={busy || !hasRequired}>
+                  {busy
+                    ? "Importing…"
+                    : `Import ${parsed.rows.length} ${parsed.rows.length === 1 ? config.noun : `${config.noun}s`}`}
                 </Button>
               </div>
-              {!hasName && (
-                <p className="text-xs text-muted-foreground">
-                  Map a column to First name or Full name to continue.
-                </p>
-              )}
+              {!hasRequired && <p className="text-xs text-muted-foreground">{config.requiredHint}</p>}
             </DialogFooter>
           </div>
         )}
@@ -284,9 +323,9 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
           <div className="flex flex-col items-center gap-3 py-6 text-center">
             <CheckCircle2 className="size-10 text-emerald-600" />
             <p className="font-semibold">
-              {result.imported} {result.imported === 1 ? "contact" : "contacts"} imported
+              {result.imported} {result.imported === 1 ? config.noun : `${config.noun}s`} imported
             </p>
-            <p className="text-sm text-muted-foreground">{doneDetail(result)}</p>
+            <p className="text-sm text-muted-foreground">{doneDetail(result, config.noun)}</p>
             <DialogFooter className="mt-2 w-full sm:justify-center">
               <Button type="button" size="sm" onClick={() => handleOpenChange(false)}>
                 Done
@@ -299,9 +338,12 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
   );
 }
 
-function doneDetail(r: ImportResult): string {
+function doneDetail(r: ImportResult, noun: string): string {
   const parts: string[] = [];
-  if (r.companiesCreated > 0) parts.push(`${r.companiesCreated} new ${r.companiesCreated === 1 ? "company" : "companies"}`);
+  if (r.companiesCreated && r.companiesCreated > 0)
+    parts.push(`${r.companiesCreated} new ${r.companiesCreated === 1 ? "company" : "companies"}`);
+  if (r.duplicates && r.duplicates > 0)
+    parts.push(`${r.duplicates} duplicate ${r.duplicates === 1 ? `${noun} name` : `${noun} names`} skipped`);
   if (r.skipped > 0) parts.push(`${r.skipped} ${r.skipped === 1 ? "row" : "rows"} skipped (no name)`);
   return parts.length ? parts.join(" · ") : "All rows imported cleanly.";
 }

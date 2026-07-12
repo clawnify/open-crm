@@ -169,6 +169,31 @@ carry no website field. A persistent org-level toggle and user-editable exclusio
 are the natural next step *if* live per-contact association (outside import) is added;
 the resolver is a shared helper, so that reuse is a one-liner.
 
+### 7c. Custom fields on import + per-entity import (shipped)
+
+Import is now generalized. The dialog (`import-dialog.tsx`, driven by an
+`EntityImportConfig` per entity in `lib/import-config.ts`) is **per-entity** —
+an **Import** button lives on both the Contacts and Companies list pages, not in
+a separate section. Mapping to where the data lives beats a central hub for a CRM
+this size (the pattern Attio/Airtable/Notion use); the one thing a hub buys —
+relationship-aware multi-object import — is already covered because contact import
+creates/associates companies.
+
+**Existing custom fields are mapping targets.** The dialog reads the entity's
+`custom_field_defs` and lists them under a "Custom fields" group in each column's
+target picker (auto-mapped when a header matches a def's key or label). On import
+the mapped values ride along in the same bulk `INSERT` as real columns — chunk
+size is derived from the live column count so bound params stay ≤ 100 (D1's cap).
+Coercion is **lenient for import**: a bad cell (invalid enum, unparseable number)
+becomes `null` rather than aborting the batch, unlike the create/update path which
+rejects. This is *mapping to fields you already created* — distinct from inferring
+brand-new defs from unmapped columns (§7, issue #3), still the last open slice.
+
+**Company import** dedupes by name (case-insensitive): a name that already exists,
+or repeats within the file, is skipped and reported (`duplicates`), never
+duplicated or overwritten; new companies land with built-ins + mapped custom fields.
+(Deals import is deferred — it's a board and needs contact-matching.)
+
 ## 8. Scope boundaries (opinionated)
 
 - No relations-as-custom-property — contact→company is already native.
