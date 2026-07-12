@@ -218,8 +218,11 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
 
   // ── Contact import ──
 
-  const importContacts = useCallback(async (rows: ImportRow[]) => {
-    const res = await api<{ imported: number; companiesCreated: number; skipped: number }>("POST", "/api/contacts/import", { contacts: rows });
+  const importContacts = useCallback(async (rows: ImportRow[], opts?: { inferCompanyFromEmail?: boolean }) => {
+    const res = await api<{ imported: number; companiesCreated: number; skipped: number }>("POST", "/api/contacts/import", {
+      contacts: rows,
+      inferCompanyFromEmail: opts?.inferCompanyFromEmail ?? false,
+    });
     await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
     return res;
   }, [contactsPag, fetchContacts, fetchStats, fetchLookups]);

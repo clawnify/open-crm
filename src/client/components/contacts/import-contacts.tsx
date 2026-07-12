@@ -82,6 +82,7 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
   const [fileName, setFileName] = useState("");
   const [parsed, setParsed] = useState<Parsed | null>(null);
   const [mapping, setMapping] = useState<ImportField[]>([]);
+  const [inferCompanies, setInferCompanies] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
   function reset() {
@@ -90,6 +91,7 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
     setFileName("");
     setParsed(null);
     setMapping([]);
+    setInferCompanies(false);
     setResult(null);
   }
 
@@ -133,6 +135,11 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
   }
 
   const hasName = mapping.some((f) => f === "first_name" || f === "full_name");
+  // Domain inference needs an email column but no explicit company mapping to be
+  // useful (a mapped Company column already resolves those rows).
+  const hasEmail = mapping.some((f) => f === "email");
+  const hasCompany = mapping.some((f) => f === "company");
+  const canInfer = hasEmail && !hasCompany;
 
   async function onImport() {
     if (!parsed) return;
@@ -154,7 +161,7 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
         });
         return out;
       });
-      const res = await importContacts(contacts);
+      const res = await importContacts(contacts, { inferCompanyFromEmail: canInfer && inferCompanies });
       setResult(res);
       setStep("done");
     } catch (err) {
@@ -235,6 +242,24 @@ export function ImportContacts({ open, onOpenChange }: { open: boolean; onOpenCh
                 </div>
               ))}
             </div>
+
+            {canInfer && (
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-input p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 size-4 shrink-0 accent-primary"
+                  checked={inferCompanies}
+                  onChange={(e) => setInferCompanies(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">Create companies from work-email domains</span>
+                  <span className="block text-xs text-muted-foreground">
+                    For rows without a company, group contacts by their email domain into a company.
+                    Personal providers (Gmail, Outlook, …) are skipped.
+                  </span>
+                </span>
+              </label>
+            )}
 
             <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col sm:items-end sm:space-x-0">
               <div className="flex justify-end gap-2">
