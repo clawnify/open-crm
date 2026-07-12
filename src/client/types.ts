@@ -120,30 +120,19 @@ export interface ConnectionStatus {
   slack: boolean;
 }
 
-// The fields an uploaded column can map to. "full_name" is a virtual target
-// that splits on the first space into first/last name. The "company_*" targets
-// carry attributes for the company that gets created/deduped from the "company"
-// column, so a new company lands with its domain/industry/phone instead of a
-// name-only stub.
-export type ImportField =
-  | "first_name"
-  | "last_name"
-  | "full_name"
-  | "email"
-  | "phone"
-  | "title"
-  | "status"
-  | "company"
-  | "company_domain"
-  | "company_industry"
-  | "company_phone"
-  | "";
+// Entities that support bulk spreadsheet import.
+export type ImportEntity = "contact" | "company";
 
-// A row handed to importContacts: contact fields plus the flat company columns
-// resolved server-side into a deduped company.
-export type ImportRow = Partial<Contact> & {
-  company?: string;
-  company_domain?: string;
-  company_industry?: string;
-  company_phone?: string;
-};
+// A row handed to the import API: a flat bag of built-in columns plus an
+// optional `custom` sub-bag of custom-field values. The concrete shape is
+// validated server-side per entity, so this is intentionally loose.
+export type ImportRow = Record<string, unknown> & { custom?: Record<string, unknown> };
+
+// Import outcome — fields vary by entity (contacts report companiesCreated,
+// companies report duplicates skipped).
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  companiesCreated?: number;
+  duplicates?: number;
+}

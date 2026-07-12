@@ -4,7 +4,8 @@ import { useCrm } from "@/context";
 import { PageHeader, Avatar, EntityIcon, CategoryBadge, EmptyState } from "@/components/shared";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { ContactDialog } from "@/components/contacts/contact-dialog";
-import { ImportContacts } from "@/components/contacts/import-contacts";
+import { ImportDialog } from "@/components/import-dialog";
+import { contactImportConfig } from "@/lib/import-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
@@ -219,7 +220,7 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
       )}
 
       <ContactDialog open={dialogOpen} onOpenChange={setDialogOpen} contact={editing} />
-      <ImportContacts open={importOpen} onOpenChange={setImportOpen} />
+      <ImportDialog open={importOpen} onOpenChange={setImportOpen} config={contactImportConfig} />
 
       <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <DialogContent className="max-w-sm">

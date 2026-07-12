@@ -11,6 +11,7 @@ import {
   coerceCustomValue,
   isEntityType,
   type EntityType,
+  type CustomFieldDef,
 } from "./custom-fields.js";
 
 // In production Clawnify injects the CREDENTIALS broker binding + CLAWNIFY_ORG_ID
@@ -81,6 +82,38 @@ async function applyCustomValues(
 
 /** Reusable request-body field: the nested bag of custom-property values. */
 const CustomValues = z.record(z.string(), z.any()).optional();
+
+/** Quote a SQL identifier (custom-field keys are already regex-validated at
+ *  def creation, but quote defensively — same as applyCustomValues). */
+const quoteIdent = (k: string) => `"${k.replace(/"/g, '""')}"`;
+
+/** Lenient coercion for bulk import: an invalid cell (bad enum, unparseable
+ *  number) becomes null rather than aborting the whole import batch. */
+function coerceForImport(value: unknown, def: CustomFieldDef): string | number | null {
+  try {
+    const v = coerceCustomValue(value, def);
+    return typeof v === "number" && Number.isNaN(v) ? null : v;
+  } catch {
+    return null;
+  }
+}
+
+/** The custom columns to write for an import: defs whose key is present and
+ *  non-empty in at least one row's `custom` bag. Keeps the bulk INSERT narrow. */
+async function resolveImportCustomColumns(
+  entity: EntityType,
+  rows: Array<{ custom?: Record<string, unknown> }>,
+): Promise<{ keys: string[]; defByKey: Map<string, CustomFieldDef> }> {
+  const defByKey = new Map((await listDefs(entity)).map((d) => [d.key, d]));
+  const present = new Set<string>();
+  for (const r of rows) {
+    if (!r.custom || typeof r.custom !== "object") continue;
+    for (const [k, v] of Object.entries(r.custom)) {
+      if (defByKey.has(k) && v !== null && v !== undefined && v !== "") present.add(k);
+    }
+  }
+  return { keys: [...present], defByKey };
+}
 
 const app = new OpenAPIHono<Env>();
 
@@ -1134,8 +1167,6 @@ app.post("/api/integrations/meeting", async (c) => {
 // if @clawnify/db ever exposes batch().
 
 const CONTACT_STATUSES = ["lead", "active", "inactive", "churned"];
-const CONTACT_COLS = 8; // id,first_name,last_name,email,phone,company_id,title,status
-const CONTACT_CHUNK = Math.floor(100 / CONTACT_COLS); // 12 rows/stmt → 96 params ≤ 100
 const LOOKUP_CHUNK = 100; // one-param `name IN (…)` lookups
 // Widest company insert is (id, name, domain, industry, phone) = 5 params/row.
 // D1 caps bound parameters at 100 per query, so chunk at 100/5 = 20 rows.
@@ -1178,6 +1209,7 @@ app.post("/api/contacts/import", async (c) => {
         company_domain?: string;
         company_industry?: string;
         company_phone?: string;
+        custom?: Record<string, unknown>;
       }>;
       // Opt-in: infer/associate a company from each contact's work-email domain
       // when the row has no explicit company column.
@@ -1207,6 +1239,7 @@ app.post("/api/contacts/import", async (c) => {
           company_industry: (r.company_industry || "").trim(),
           company_phone: (r.company_phone || "").trim(),
           inferDomain: inferFromEmail && !company && email ? workEmailDomain(email) : "",
+          custom: r.custom && typeof r.custom === "object" ? r.custom : undefined,
         };
       })
       .filter((r) => r.first_name);
@@ -1293,9 +1326,17 @@ app.post("/api/contacts/import", async (c) => {
     const companiesCreated = missing.length + missingDomains.length;
 
     // ── Bulk-insert contacts (multi-row VALUES, chunked) ──
+    // Mapped custom-field columns ride along in the same INSERT. Chunk size is
+    // derived from the real column count so bound params stay ≤ 100 (D1 cap).
+    const custom = await resolveImportCustomColumns("contact", clean);
+    const builtinCols = ["id", "first_name", "last_name", "email", "phone", "company_id", "title", "status"];
+    const cols = [...builtinCols, ...custom.keys.map(quoteIdent)];
+    const rowsPerStmt = Math.max(1, Math.floor(100 / cols.length));
+    const rowPlaceholder = `(${cols.map(() => "?").join(", ")})`;
+
     let imported = 0;
-    for (const group of chunk(clean, CONTACT_CHUNK)) {
-      const placeholders = group.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    for (const group of chunk(clean, rowsPerStmt)) {
+      const placeholders = group.map(() => rowPlaceholder).join(", ");
       const params: unknown[] = [];
       for (const r of group) {
         const companyId = r.company
@@ -1304,15 +1345,100 @@ app.post("/api/contacts/import", async (c) => {
             ? companyIdByDomain.get(r.inferDomain) ?? null
             : null;
         params.push(crypto.randomUUID(), r.first_name, r.last_name, r.email, r.phone, companyId, r.title, r.status);
+        for (const k of custom.keys) params.push(coerceForImport(r.custom?.[k], custom.defByKey.get(k)!));
       }
-      await run(
-        `INSERT INTO contacts (id, first_name, last_name, email, phone, company_id, title, status) VALUES ${placeholders}`,
-        params,
-      );
+      await run(`INSERT INTO contacts (${cols.join(", ")}) VALUES ${placeholders}`, params);
       imported += group.length;
     }
 
     return c.json({ imported, companiesCreated, skipped }, 200);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// ── Bulk company import (CSV / XLSX) ────────────────────────────────
+// Dedupe by name (case-insensitive): a company whose name already exists is
+// skipped, never duplicated or overwritten. New companies land with their
+// built-in columns + any mapped custom fields.
+app.post("/api/companies/import", async (c) => {
+  try {
+    const body = await c.req.json<{
+      companies?: Array<{
+        name?: string;
+        domain?: string;
+        industry?: string;
+        phone?: string;
+        email?: string;
+        notes?: string;
+        custom?: Record<string, unknown>;
+      }>;
+    }>();
+    const rows = Array.isArray(body.companies) ? body.companies : [];
+    if (rows.length === 0) return c.json({ error: "No rows to import" }, 400);
+    if (rows.length > 2000) return c.json({ error: "Import is limited to 2000 rows at a time" }, 400);
+
+    // Keep only rows with a name; collapse to the first-seen row per name so a
+    // duplicated name in the file resolves to one company (first wins).
+    const byKey = new Map<string, {
+      name: string; domain: string; industry: string; phone: string; email: string; notes: string;
+      custom?: Record<string, unknown>;
+    }>();
+    for (const r of rows) {
+      const name = (r.name || "").trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (byKey.has(key)) continue;
+      byKey.set(key, {
+        name,
+        domain: (r.domain || "").trim(),
+        industry: (r.industry || "").trim(),
+        phone: (r.phone || "").trim(),
+        email: (r.email || "").trim(),
+        notes: (r.notes || "").trim(),
+        custom: r.custom && typeof r.custom === "object" ? r.custom : undefined,
+      });
+    }
+    const named = rows.filter((r) => (r.name || "").trim()).length;
+    const noName = rows.length - named; // rows with no company name at all
+    const fileDuplicates = named - byKey.size; // same name repeated within the file
+    if (byKey.size === 0) return c.json({ error: "No rows had a company name to import" }, 400);
+
+    // Which names already exist → skip those (dedupe).
+    const existing = new Set<string>();
+    const names = [...byKey.values()].map((co) => co.name);
+    for (const group of chunk(names, LOOKUP_CHUNK)) {
+      const placeholders = group.map(() => "?").join(", ");
+      const found = await query<{ name: string }>(
+        `SELECT name FROM companies WHERE name COLLATE NOCASE IN (${placeholders})`,
+        group,
+      );
+      for (const co of found) existing.add(co.name.toLowerCase());
+    }
+    const fresh = [...byKey].filter(([key]) => !existing.has(key)).map(([, co]) => co);
+    // Duplicates = names repeated within the file + names that already exist.
+    const duplicates = fileDuplicates + (byKey.size - fresh.length);
+
+    // Bulk-insert new companies + mapped custom columns (chunk from col count).
+    const custom = await resolveImportCustomColumns("company", fresh);
+    const builtinCols = ["id", "name", "domain", "industry", "phone", "email", "notes"];
+    const cols = [...builtinCols, ...custom.keys.map(quoteIdent)];
+    const rowsPerStmt = Math.max(1, Math.floor(100 / cols.length));
+    const rowPlaceholder = `(${cols.map(() => "?").join(", ")})`;
+
+    let imported = 0;
+    for (const group of chunk(fresh, rowsPerStmt)) {
+      const placeholders = group.map(() => rowPlaceholder).join(", ");
+      const params: unknown[] = [];
+      for (const co of group) {
+        params.push(crypto.randomUUID(), co.name, co.domain, co.industry, co.phone, co.email, co.notes);
+        for (const k of custom.keys) params.push(coerceForImport(co.custom?.[k], custom.defByKey.get(k)!));
+      }
+      await run(`INSERT INTO companies (${cols.join(", ")}) VALUES ${placeholders}`, params);
+      imported += group.length;
+    }
+
+    return c.json({ imported, skipped: noName, duplicates }, 200);
   } catch (err: unknown) {
     return c.json({ error: (err as Error).message }, 500);
   }

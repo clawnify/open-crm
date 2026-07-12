@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, type Dispatch, type SetStateAction } 
 import { api } from "../api";
 import type {
   Contact, Company, Deal, Stats, PaginatedState,
-  CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType, CustomFieldDef, ImportRow,
+  CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType, CustomFieldDef, ImportRow, ImportEntity, ImportResult,
 } from "../types";
 import type { CrmContextValue } from "../context";
 
@@ -216,16 +216,24 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     await api("POST", "/api/activities", { entity_type: entityType, entity_id: entityId, type: "note", body });
   }, []);
 
-  // ── Contact import ──
+  // ── Bulk import (contacts / companies) ──
 
-  const importContacts = useCallback(async (rows: ImportRow[], opts?: { inferCompanyFromEmail?: boolean }) => {
-    const res = await api<{ imported: number; companiesCreated: number; skipped: number }>("POST", "/api/contacts/import", {
-      contacts: rows,
-      inferCompanyFromEmail: opts?.inferCompanyFromEmail ?? false,
-    });
-    await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
-    return res;
-  }, [contactsPag, fetchContacts, fetchStats, fetchLookups]);
+  const importEntity = useCallback(
+    async (entity: ImportEntity, rows: ImportRow[], opts?: { inferCompanyFromEmail?: boolean }): Promise<ImportResult> => {
+      if (entity === "company") {
+        const res = await api<ImportResult>("POST", "/api/companies/import", { companies: rows });
+        await Promise.all([fetchCompanies(companiesPag), fetchStats(), fetchLookups()]);
+        return res;
+      }
+      const res = await api<ImportResult>("POST", "/api/contacts/import", {
+        contacts: rows,
+        inferCompanyFromEmail: opts?.inferCompanyFromEmail ?? false,
+      });
+      await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
+      return res;
+    },
+    [contactsPag, companiesPag, fetchContacts, fetchCompanies, fetchStats, fetchLookups],
+  );
 
   return {
     isAgent, stats,
@@ -237,7 +245,7 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     addDeal, updateDeal, deleteDeal, boardDeals,
     companyLookup, contactLookup,
     connections, emailContact, scheduleMeeting,
-    fetchActivities, addNote, importContacts,
+    fetchActivities, addNote, importEntity,
     customFields, refetchCustomFields,
     loading, error, setError,
   };
