@@ -176,10 +176,48 @@ const IdParam = z.object({ id: z.string().openapi({ description: "Resource ID (i
 const PaginationQuery = z.object({
   page: z.string().optional().openapi({ description: "Page number (default: 1)" }),
   limit: z.string().optional().openapi({ description: "Items per page (default: 25, max: 100)" }),
-  sort: z.string().optional().openapi({ description: "Column to sort by" }),
+  sort: z.string().optional().openapi({ description: "Column to sort by (any real column, incl. custom fields)" }),
   order: z.enum(["asc", "desc"]).optional().openapi({ description: "Sort direction (default: desc)" }),
   search: z.string().optional().openapi({ description: "Search term" }),
+  filters: z.string().optional().openapi({ description: 'JSON array of {field, op, value} — op ∈ contains|is|is_not|is_empty|is_not_empty|gt|lt' }),
 });
+
+/** Real column names of a table (from sqlite). Used to validate sort/filter
+ *  fields against actual columns — the safe allowlist for built-ins + custom. */
+async function tableColumns(table: string): Promise<Set<string>> {
+  const rows = await query<{ name: string }>(`PRAGMA table_info(${table})`);
+  return new Set(rows.map((r) => r.name));
+}
+
+const qid = (col: string) => `"${col.replace(/"/g, '""')}"`;
+
+interface Filter { field: string; op: string; value?: string }
+
+/** Build safe WHERE clauses from a JSON filter list. Fields are validated
+ *  against `cols` (real columns), so identifiers are never user-controlled;
+ *  values are always parameterised. */
+function buildFilters(cols: Set<string>, raw: string | undefined, prefix = ""): { clauses: string[]; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  let filters: Filter[] = [];
+  try { const a = JSON.parse(raw || "[]"); if (Array.isArray(a)) filters = a; } catch { /* ignore */ }
+  for (const f of filters) {
+    if (!f || typeof f.field !== "string" || !cols.has(f.field)) continue;
+    const col = `${prefix}${qid(f.field)}`;
+    const v = f.value ?? "";
+    switch (f.op) {
+      case "contains": clauses.push(`${col} LIKE ?`); params.push(`%${v}%`); break;
+      case "is": clauses.push(`${col} = ?`); params.push(v); break;
+      case "is_not": clauses.push(`(${col} IS NULL OR ${col} != ?)`); params.push(v); break;
+      case "is_empty": clauses.push(`(${col} IS NULL OR ${col} = '')`); break;
+      case "is_not_empty": clauses.push(`(${col} IS NOT NULL AND ${col} != '')`); break;
+      case "gt": clauses.push(`${col} > ?`); params.push(Number(v)); break;
+      case "lt": clauses.push(`${col} < ?`); params.push(Number(v)); break;
+      default: break;
+    }
+  }
+  return { clauses, params };
+}
 
 // ── Stats ──────────────────────────────────────────────────────────
 
@@ -254,8 +292,9 @@ app.openapi(listCompanies, async (c) => {
     const search = (q.search || "").trim();
     const industry = (q.industry || "").trim();
 
+    const cols = await tableColumns("companies");
     let sortCol = q.sort || "id";
-    if (!["id", "name", "domain", "industry", "created_at"].includes(sortCol)) sortCol = "id";
+    if (!cols.has(sortCol)) sortCol = "id";
     let order = (q.order || "desc").toLowerCase();
     if (order !== "asc" && order !== "desc") order = "desc";
 
@@ -270,6 +309,9 @@ app.openapi(listCompanies, async (c) => {
       where.push("industry = ?");
       params.push(industry);
     }
+    const flt = buildFilters(cols, q.filters);
+    where.push(...flt.clauses);
+    params.push(...flt.params);
 
     const whereSQL = where.length ? " WHERE " + where.join(" AND ") : "";
 
@@ -281,7 +323,7 @@ app.openapi(listCompanies, async (c) => {
 
     const rows = await query(
       `SELECT c.*, (SELECT COUNT(*) FROM contacts WHERE company_id = c.id) as contact_count
-       FROM companies c${whereSQL} ORDER BY c.${sortCol} ${order} LIMIT ? OFFSET ?`,
+       FROM companies c${whereSQL} ORDER BY c.${qid(sortCol)} ${order} LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
 
@@ -466,8 +508,9 @@ app.openapi(listContacts, async (c) => {
     const status = (q.status || "").trim();
     const companyId = q.company_id || "";
 
+    const cols = await tableColumns("contacts");
     let sortCol = q.sort || "id";
-    if (!["id", "first_name", "last_name", "email", "status", "company_id", "created_at"].includes(sortCol)) sortCol = "id";
+    if (!cols.has(sortCol)) sortCol = "id";
     let order = (q.order || "desc").toLowerCase();
     if (order !== "asc" && order !== "desc") order = "desc";
 
@@ -486,6 +529,9 @@ app.openapi(listContacts, async (c) => {
       where.push("ct.company_id = ?");
       params.push(companyId);
     }
+    const flt = buildFilters(cols, q.filters, "ct.");
+    where.push(...flt.clauses);
+    params.push(...flt.params);
 
     const whereSQL = where.length ? " WHERE " + where.join(" AND ") : "";
 
@@ -495,14 +541,12 @@ app.openapi(listContacts, async (c) => {
     );
     const total = countResult?.total || 0;
 
-    const sortPrefix = ["id", "first_name", "last_name", "email", "status", "company_id", "created_at"].includes(sortCol) ? "ct." : "";
-
     const rows = await query(
       `SELECT ct.*, co.name as company_name, co.domain as company_domain
        FROM contacts ct
        LEFT JOIN companies co ON ct.company_id = co.id
        ${whereSQL}
-       ORDER BY ${sortPrefix}${sortCol} ${order}
+       ORDER BY ct.${qid(sortCol)} ${order}
        LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );

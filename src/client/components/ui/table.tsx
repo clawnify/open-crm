@@ -29,13 +29,17 @@ TableRow.displayName = "TableRow";
 
 const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<HTMLTableCellElement>>(
   ({ className, ...props }, ref) => (
-    <th ref={ref} className={cn("h-10 px-3 text-left align-middle text-xs font-semibold uppercase tracking-wider text-muted-foreground", className)} {...props} />
+    <th ref={ref} className={cn("h-10 whitespace-nowrap px-3 text-left align-middle text-xs font-semibold uppercase tracking-wider text-muted-foreground", className)} {...props} />
   ),
 );
 TableHead.displayName = "TableHead";
 
+// Cells cap column width and clip to a single line: the column grows to fit
+// its content up to `max-w`, then truncates. Keeps rows one line tall even
+// when a cell holds a long summary or many tags. Override `max-w-*` per cell
+// when a column needs to be wider/narrower.
 const TableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttributes<HTMLTableCellElement>>(
-  ({ className, ...props }, ref) => <td ref={ref} className={cn("px-3 py-3 align-middle", className)} {...props} />,
+  ({ className, ...props }, ref) => <td ref={ref} className={cn("max-w-[16rem] truncate px-3 py-2 align-middle", className)} {...props} />,
 );
 TableCell.displayName = "TableCell";
 

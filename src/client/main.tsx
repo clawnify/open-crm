@@ -2,11 +2,9 @@ import { createRoot } from "react-dom/client";
 import { App } from "./app";
 import "./styles.css";
 
-// Dark mode follows the OS (DESIGN-APPS: prefers-color-scheme → .dark).
-const mql = window.matchMedia("(prefers-color-scheme: dark)");
-const applyTheme = (dark: boolean) => document.documentElement.classList.toggle("dark", dark);
-applyTheme(mql.matches);
-mql.addEventListener("change", (e) => applyTheme(e.matches));
+// Default to the light (white) theme — do not follow the OS. A future in-app
+// toggle can add/remove `.dark`; until then the CRM is white by default.
+document.documentElement.classList.remove("dark");
 
 // Agent/touch mode enlarges interactive targets (?agent or ?mode=agent).
 const params = new URLSearchParams(window.location.search);
