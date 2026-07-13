@@ -4,6 +4,8 @@ import { useCrm } from "@/context";
 import { PageHeader, Avatar, EntityIcon, CategoryBadge, EmptyState } from "@/components/shared";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { ContactDialog } from "@/components/contacts/contact-dialog";
+import { ContactPreview } from "@/components/contacts/contact-preview";
+import { TableFilter, fieldsFromDefs } from "@/components/table-filter";
 import { ImportDialog } from "@/components/import-dialog";
 import { contactImportConfig } from "@/lib/import-config";
 import { Button } from "@/components/ui/button";
@@ -15,13 +17,25 @@ import { CustomFieldDisplay, readCustom } from "@/lib/custom-fields";
 import type { Contact } from "@/types";
 
 export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
-  const { contacts, contactsPag, stats, setContactsPage, setContactsSort, setContactsSearch, deleteContact, customFields } = useCrm();
+  const { contacts, contactsPag, stats, setContactsPage, setContactsSort, setContactsSearch, setContactsFilters, deleteContact, customFields } = useCrm();
   const contactFields = customFields.filter((d) => d.entity_type === "contact");
+  const filterFields = fieldsFromDefs(
+    [
+      { key: "first_name", label: "First name", type: "text" },
+      { key: "last_name", label: "Last name", type: "text" },
+      { key: "email", label: "Email", type: "text" },
+      { key: "phone", label: "Phone", type: "text" },
+      { key: "title", label: "Title", type: "text" },
+      { key: "status", label: "Status", type: "text" },
+    ],
+    contactFields,
+  );
 
   const [search, setSearch] = useState(contactsPag.search);
   const [importOpen, setImportOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Contact | undefined>(undefined);
+  const [preview, setPreview] = useState<Contact | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -74,6 +88,7 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
             className="h-9 w-56 pl-8"
           />
         </div>
+        <TableFilter fields={filterFields} filters={contactsPag.filters} onChange={setContactsFilters} />
         <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
           <Upload className="size-4" />
           Import
@@ -104,12 +119,12 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
                 <TableRow>
                   <SortHeader col="first_name" pag={contactsPag} onSort={setContactsSort}>Name</SortHeader>
                   <SortHeader col="email" pag={contactsPag} onSort={setContactsSort}>Email</SortHeader>
-                  <TableHead>Phone</TableHead>
+                  <SortHeader col="phone" pag={contactsPag} onSort={setContactsSort}>Phone</SortHeader>
                   <TableHead>Company</TableHead>
-                  <TableHead>Title</TableHead>
+                  <SortHeader col="title" pag={contactsPag} onSort={setContactsSort}>Title</SortHeader>
                   <SortHeader col="status" pag={contactsPag} onSort={setContactsSort}>Status</SortHeader>
                   {contactFields.map((def) => (
-                    <TableHead key={def.id}>{def.label}</TableHead>
+                    <SortHeader key={def.id} col={def.key} pag={contactsPag} onSort={setContactsSort}>{def.label}</SortHeader>
                   ))}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -118,20 +133,20 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
                 {contacts.map((c) => {
                   const fullName = `${c.first_name} ${c.last_name}`.trim();
                   return (
-                    <TableRow key={c.id} className="hover:bg-secondary">
+                    <TableRow key={c.id} className="cursor-pointer hover:bg-secondary" onClick={() => setPreview(c)}>
                       <TableCell>
                         <button
-                          onClick={() => navigate(`/contacts/${c.id}`)}
+                          onClick={(e) => { e.stopPropagation(); setPreview(c); }}
                           aria-label={`View ${fullName || "contact"}`}
-                          className="flex items-center gap-2.5 text-left font-medium hover:underline"
+                          className="flex min-w-0 items-center gap-2.5 text-left font-medium hover:underline"
                         >
                           <Avatar firstName={c.first_name} lastName={c.last_name} />
-                          <span>{fullName || "—"}</span>
+                          <span className="truncate">{fullName || "—"}</span>
                         </button>
                       </TableCell>
                       <TableCell>
                         {c.email ? (
-                          <a href={`mailto:${c.email}`} className="text-[var(--ring)] hover:underline">
+                          <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()} className="text-[var(--ring)] hover:underline">
                             {c.email}
                           </a>
                         ) : (
@@ -163,7 +178,7 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
                         </TableCell>
                       ))}
                       <TableCell>
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                           <Button
                             size="icon"
                             variant="ghost"
@@ -221,6 +236,11 @@ export function ContactsPage({ navigate }: { navigate: (to: string) => void }) {
 
       <ContactDialog open={dialogOpen} onOpenChange={setDialogOpen} contact={editing} />
       <ImportDialog open={importOpen} onOpenChange={setImportOpen} config={contactImportConfig} />
+      <ContactPreview
+        contact={preview}
+        onClose={() => setPreview(null)}
+        onEdit={(c) => { setPreview(null); openEdit(c); }}
+      />
 
       <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <DialogContent className="max-w-sm">

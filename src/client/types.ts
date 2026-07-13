@@ -81,6 +81,12 @@ export interface Stats {
   dealValue: number;
 }
 
+export interface Filter {
+  field: string;
+  op: "contains" | "is" | "is_not" | "is_empty" | "is_not_empty" | "gt" | "lt";
+  value?: string;
+}
+
 export interface PaginatedState {
   page: number;
   limit: number;
@@ -88,6 +94,7 @@ export interface PaginatedState {
   sort: string;
   order: "asc" | "desc";
   search: string;
+  filters: Filter[];
 }
 
 export interface CompanyLookup {

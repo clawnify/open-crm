@@ -79,7 +79,10 @@ function badgeToken(value: string): ColorToken {
 function Pill({ value }: { value: string }) {
   const c = colorClasses(badgeToken(value));
   return (
-    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", c.bg, c.text, c.border)}>
+    <span
+      title={value}
+      className={cn("inline-block max-w-[10rem] truncate rounded-full border px-2 py-0.5 align-middle text-xs font-medium", c.bg, c.text, c.border)}
+    >
       {value}
     </span>
   );
@@ -102,7 +105,7 @@ function parseTags(value: unknown): string[] {
 
 // ── Display (read-only) ───────────────────────────────────────────────
 
-export function CustomFieldDisplay({ def, value }: { def: CustomFieldDef; value: unknown }) {
+export function CustomFieldDisplay({ def, value, full = false }: { def: CustomFieldDef; value: unknown; full?: boolean }) {
   if (value === null || value === undefined || value === "") {
     return <span className="text-muted-foreground">—</span>;
   }
@@ -128,24 +131,28 @@ export function CustomFieldDisplay({ def, value }: { def: CustomFieldDef; value:
     const s = String(value);
     return (
       <a href={hrefFor(widget, s)} target={widget === "clawnify::url.url" ? "_blank" : undefined} rel="noreferrer"
-        onClick={(e) => e.stopPropagation()}
-        className="inline-flex items-center gap-1 text-link hover:underline">
-        {s}
-        {widget === "clawnify::url.url" && <ExternalLink className="size-3 opacity-60" />}
+        onClick={(e) => e.stopPropagation()} title={s}
+        className="inline-flex max-w-[14rem] items-center gap-1 align-middle text-link hover:underline">
+        <span className="truncate">{s}</span>
+        {widget === "clawnify::url.url" && <ExternalLink className="size-3 shrink-0 opacity-60" />}
       </a>
     );
   }
   if (widget === "clawnify::tags.tags") {
     const tags = parseTags(value);
+    if (tags.length === 0) return <span className="text-muted-foreground">—</span>;
+    const shown = tags.slice(0, 2);
+    const extra = tags.length - shown.length;
     return (
-      <span className="inline-flex flex-wrap gap-1">
-        {tags.map((t) => <Pill key={t} value={t} />)}
+      <span className="inline-flex items-center gap-1 whitespace-nowrap align-middle" title={tags.join(", ")}>
+        {shown.map((t) => <Pill key={t} value={t} />)}
+        {extra > 0 && <span className="shrink-0 text-xs text-muted-foreground">+{extra}</span>}
       </span>
     );
   }
   // Bare base types
   if (def.field_type === "boolean") return <span>{value ? "Yes" : "No"}</span>;
-  return <span className="text-foreground">{String(value)}</span>;
+  return <span title={String(value)} className="text-foreground">{String(value)}</span>;
 }
 
 function hrefFor(widget: string, raw: string): string {

@@ -17,10 +17,13 @@ export function Avatar({ firstName, lastName, className }: { firstName?: string 
 export function EntityIcon({ name, domain, className }: { name: string; domain?: string | null; className?: string }) {
   const [err, setErr] = useState(false);
   const c = categoryClasses(name);
-  if (domain && !err) {
+  // Tolerate a stored value that's a full URL ("https://www.acme.com/x") — the
+  // favicon service needs a bare host ("acme.com").
+  const host = (domain || "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/^www\./i, "");
+  if (host && !err) {
     return (
       <span className={cn("inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-secondary", className)}>
-        <img src={`https://favicone.com/${domain}?s=32`} alt="" width={16} height={16} onError={() => setErr(true)} />
+        <img src={`https://www.google.com/s2/favicons?sz=64&domain=${host}`} alt="" width={16} height={16} onError={() => setErr(true)} />
       </span>
     );
   }
@@ -36,7 +39,10 @@ export function CategoryBadge({ value }: { value?: string | null }) {
   if (!value) return <span className="text-muted-foreground">—</span>;
   const c = categoryClasses(value);
   return (
-    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-normal capitalize", c.bg, c.text, c.border)}>
+    <span
+      title={value}
+      className={cn("inline-block max-w-[12rem] truncate rounded-full border px-2 py-0.5 align-middle text-xs font-normal capitalize", c.bg, c.text, c.border)}
+    >
       {value}
     </span>
   );

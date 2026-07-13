@@ -7,7 +7,7 @@ import type {
 import type { CrmContextValue } from "../context";
 
 const defaultPag = (sort: string): PaginatedState => ({
-  page: 1, limit: 25, total: 0, sort, order: "desc", search: "",
+  page: 1, limit: 25, total: 0, sort, order: "desc", search: "", filters: [],
 });
 
 function pagParams(pag: PaginatedState): URLSearchParams {
@@ -15,6 +15,7 @@ function pagParams(pag: PaginatedState): URLSearchParams {
     page: String(pag.page), limit: String(pag.limit), sort: pag.sort, order: pag.order,
   });
   if (pag.search) p.set("search", pag.search);
+  if (pag.filters.length) p.set("filters", JSON.stringify(pag.filters));
   return p;
 }
 
@@ -115,10 +116,10 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
 
   useEffect(() => { fetchContacts(contactsPag).catch((e) => setError((e as Error).message)); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [contactsPag.page, contactsPag.sort, contactsPag.order, contactsPag.search]);
+    [contactsPag.page, contactsPag.sort, contactsPag.order, contactsPag.search, JSON.stringify(contactsPag.filters)]);
   useEffect(() => { fetchCompanies(companiesPag).catch((e) => setError((e as Error).message)); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [companiesPag.page, companiesPag.sort, companiesPag.order, companiesPag.search]);
+    [companiesPag.page, companiesPag.sort, companiesPag.order, companiesPag.search, JSON.stringify(companiesPag.filters)]);
   useEffect(() => { fetchDeals(dealsPag).catch((e) => setError((e as Error).message)); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dealsPag.page, dealsPag.sort, dealsPag.order, dealsPag.search]);
@@ -129,6 +130,7 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     setPage: (page: number) => setter((p) => ({ ...p, page })),
     setSort: (col: string) => setter((p) => ({ ...p, sort: col, order: p.sort === col && p.order === "asc" ? "desc" : "asc", page: 1 })),
     setSearch: (search: string) => setter((p) => ({ ...p, search, page: 1 })),
+    setFilters: (filters: PaginatedState["filters"]) => setter((p) => ({ ...p, filters, page: 1 })),
   });
   const cSet = makeSetters(setContactsPag);
   const coSet = makeSetters(setCompaniesPag);
@@ -237,9 +239,9 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
 
   return {
     isAgent, stats,
-    contacts, contactsPag, setContactsPage: cSet.setPage, setContactsSort: cSet.setSort, setContactsSearch: cSet.setSearch,
+    contacts, contactsPag, setContactsPage: cSet.setPage, setContactsSort: cSet.setSort, setContactsSearch: cSet.setSearch, setContactsFilters: cSet.setFilters,
     addContact, updateContact, deleteContact, fetchContact,
-    companies, companiesPag, setCompaniesPage: coSet.setPage, setCompaniesSort: coSet.setSort, setCompaniesSearch: coSet.setSearch,
+    companies, companiesPag, setCompaniesPage: coSet.setPage, setCompaniesSort: coSet.setSort, setCompaniesSearch: coSet.setSearch, setCompaniesFilters: coSet.setFilters,
     addCompany, updateCompany, deleteCompany,
     deals, dealsPag, dealsTotalValue, setDealsPage: dSet.setPage, setDealsSort: dSet.setSort, setDealsSearch: dSet.setSearch,
     addDeal, updateDeal, deleteDeal, boardDeals,
