@@ -323,7 +323,7 @@ app.openapi(listCompanies, async (c) => {
 
     const rows = await query(
       `SELECT c.*, (SELECT COUNT(*) FROM contacts WHERE company_id = c.id) as contact_count
-       FROM companies c${whereSQL} ORDER BY c.${qid(sortCol)} ${order} LIMIT ? OFFSET ?`,
+       FROM companies c${whereSQL} ORDER BY c.${qid(sortCol)} ${order}, c.id LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
 
@@ -546,7 +546,7 @@ app.openapi(listContacts, async (c) => {
        FROM contacts ct
        LEFT JOIN companies co ON ct.company_id = co.id
        ${whereSQL}
-       ORDER BY ct.${qid(sortCol)} ${order}
+       ORDER BY ct.${qid(sortCol)} ${order}, ct.id
        LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
@@ -821,7 +821,7 @@ app.openapi(listDeals, async (c) => {
        LEFT JOIN contacts ct ON d.contact_id = ct.id
        LEFT JOIN companies co ON ct.company_id = co.id
        ${whereSQL}
-       ORDER BY d.${sortCol} ${order}
+       ORDER BY d.${sortCol} ${order}, d.id
        LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
