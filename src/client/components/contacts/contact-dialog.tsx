@@ -12,6 +12,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { CustomFieldsSection, readCustom } from "@/lib/custom-fields";
 import type { Contact } from "@/types";
 
@@ -134,22 +135,18 @@ export function ContactDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="company">Company</Label>
-              <Select
+              <Combobox
+                id="company"
                 value={form.company_id === "" ? NO_COMPANY : form.company_id}
-                onValueChange={(v) => set("company_id", v === NO_COMPANY ? "" : v)}
-              >
-                <SelectTrigger id="company">
-                  <SelectValue placeholder="None" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_COMPANY}>None</SelectItem>
-                  {companyLookup.map((co) => (
-                    <SelectItem key={co.id} value={co.id}>
-                      {co.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(v) => set("company_id", v === NO_COMPANY ? "" : v)}
+                placeholder="None"
+                searchPlaceholder="Search companies…"
+                emptyText="No companies found."
+                options={[
+                  { value: NO_COMPANY, label: "None" },
+                  ...companyLookup.map((co) => ({ value: co.id, label: co.name })),
+                ]}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="title">Title</Label>
