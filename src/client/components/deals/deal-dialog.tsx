@@ -13,6 +13,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { CustomFieldsSection, readCustom } from "@/lib/custom-fields";
 import type { Deal } from "@/types";
 
@@ -109,22 +110,18 @@ export function DealDialog({
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="contact">Contact</Label>
-            <Select
+            <Combobox
+              id="contact"
               value={form.contact_id === "" ? NO_CONTACT : form.contact_id}
-              onValueChange={(v) => set("contact_id", v === NO_CONTACT ? "" : v)}
-            >
-              <SelectTrigger id="contact" className="w-full">
-                <SelectValue placeholder="None" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_CONTACT}>None</SelectItem>
-                {contactLookup.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {`${c.first_name} ${c.last_name}`.trim()}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChange={(v) => set("contact_id", v === NO_CONTACT ? "" : v)}
+              placeholder="None"
+              searchPlaceholder="Search contacts…"
+              emptyText="No contacts found."
+              options={[
+                { value: NO_CONTACT, label: "None" },
+                ...contactLookup.map((c) => ({ value: c.id, label: `${c.first_name} ${c.last_name}`.trim() || "—" })),
+              ]}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">

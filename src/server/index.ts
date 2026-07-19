@@ -590,7 +590,14 @@ app.openapi(createContact, async (c) => {
     const firstName = body.first_name.trim();
     if (!firstName) return c.json({ error: "First name is required" }, 400);
 
-    const companyId = body.company_id ? String(body.company_id) : null;
+    // Link to the chosen company, or infer one from the work-email domain
+    // (skips free providers) so a contact never lands orphaned when its email
+    // clearly belongs to a company.
+    let companyId = body.company_id ? String(body.company_id) : null;
+    if (!companyId && body.email) {
+      const dom = workEmailDomain(String(body.email));
+      if (dom) companyId = await findOrCreateCompanyByDomain(dom);
+    }
 
     const id = crypto.randomUUID();
     await run(
@@ -1230,6 +1237,24 @@ function workEmailDomain(email: string): string {
   const domain = email.slice(at + 1).trim().toLowerCase();
   if (!domain || !domain.includes(".")) return "";
   return FREEMAIL_DOMAINS.has(domain) ? "" : domain;
+}
+
+/** Find a company whose stored domain resolves to `domain` (tolerating
+ *  protocol / www / trailing slash), else create a lightweight one named after
+ *  the domain. Used to auto-link a contact to a company from its work email. */
+async function findOrCreateCompanyByDomain(domain: string): Promise<string> {
+  const existing = await get<{ id: string }>(
+    `SELECT id FROM companies
+      WHERE lower(replace(replace(replace(rtrim(domain,'/'),'https://',''),'http://',''),'www.','')) = ?
+      LIMIT 1`,
+    [domain],
+  );
+  if (existing) return existing.id;
+  const id = crypto.randomUUID();
+  const sld = domain.split(".")[0] || domain;
+  const name = sld.charAt(0).toUpperCase() + sld.slice(1);
+  await run("INSERT INTO companies (id, name, domain) VALUES (?, ?, ?)", [id, name, domain]);
+  return id;
 }
 
 // A first-guess company name from a domain: "acme.com" → "Acme". Crude but
