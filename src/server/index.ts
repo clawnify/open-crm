@@ -571,8 +571,10 @@ app.openapi(listContacts, async (c) => {
     const params: unknown[] = [];
 
     if (search) {
-      where.push("(ct.first_name LIKE ? OR ct.last_name LIKE ? OR ct.email LIKE ? OR ct.title LIKE ?)");
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      // Match the contact's own fields OR their company name, so searching a
+      // company surfaces its contacts (both queries LEFT JOIN companies as `co`).
+      where.push("(ct.first_name LIKE ? OR ct.last_name LIKE ? OR ct.email LIKE ? OR ct.title LIKE ? OR co.name LIKE ?)");
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (status) {
       where.push("ct.status = ?");
@@ -589,7 +591,7 @@ app.openapi(listContacts, async (c) => {
     const whereSQL = where.length ? " WHERE " + where.join(" AND ") : "";
 
     const countResult = await get<{ total: number }>(
-      "SELECT COUNT(*) as total FROM contacts ct" + whereSQL,
+      "SELECT COUNT(*) as total FROM contacts ct LEFT JOIN companies co ON ct.company_id = co.id" + whereSQL,
       [...params],
     );
     const total = countResult?.total || 0;
