@@ -77,6 +77,42 @@ export function assertValidKey(entity: EntityType, key: string): void {
   }
 }
 
+/**
+ * Split a flat bag of candidate values into writable custom values (keys that
+ * have a registered def) and unknown keys (keys that are neither a built-in
+ * column nor a defined custom field). Built-in keys are handled by the caller's
+ * base write path, so they are neither returned nor flagged.
+ *
+ * This is what makes writes agent-safe: a mistyped or unregistered field
+ * surfaces as `unknown` (the caller rejects it loudly) instead of being
+ * silently dropped — the failure mode that bit both operators and agents when
+ * custom values could only be reached through a nested `custom` bag.
+ */
+export async function classifyCustomWrite(
+  entity: EntityType,
+  candidates: Record<string, unknown>,
+): Promise<{ values: Record<string, unknown>; unknown: string[] }> {
+  const known = new Set((await listDefs(entity)).map((d) => d.key));
+  const builtins = BUILTIN_COLUMNS[entity];
+  const values: Record<string, unknown> = {};
+  const unknown: string[] = [];
+  for (const [k, v] of Object.entries(candidates)) {
+    if (known.has(k)) values[k] = v;
+    else if (!builtins.has(k)) unknown.push(k);
+  }
+  return { values, unknown };
+}
+
+/** Human-facing list of writable field keys (built-ins + registered custom),
+ *  for the error body when a write includes an unknown field. Omits the
+ *  server-managed columns a caller can't set. */
+export async function writableFieldKeys(entity: EntityType): Promise<string[]> {
+  const managed = new Set(["id", "created_at", "updated_at"]);
+  const builtins = [...BUILTIN_COLUMNS[entity]].filter((k) => !managed.has(k));
+  const custom = (await listDefs(entity)).map((d) => d.key);
+  return [...builtins, ...custom];
+}
+
 function quote(ident: string): string {
   return '"' + ident.replace(/"/g, '""') + '"';
 }
