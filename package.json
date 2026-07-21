@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@clawnify/connections": "^0.2.2",
-    "@clawnify/db": "^0.2.0",
+    "@clawnify/db": "^0.4.1",
     "@clawnify/routes": "^0.2.0",
     "@hono/zod-openapi": "^0.18.0",
     "@radix-ui/react-dialog": "^1.1.15",
