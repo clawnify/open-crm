@@ -1,6 +1,6 @@
-import { OpenAPIHono, createRoute, z, mountDiscovery } from "@clawnify/routes";
+import { createApp, createRoute, z } from "@clawnify/app";
 import freemailDomains from "free-email-domains";
-import { initDB, query, get, run } from "./db.js";
+import { query, get, run } from "./db.js";
 import type { CredentialBinding } from "@clawnify/connections";
 import { sendEmail, createMeeting, notifySlack, connectionStatus } from "./integrations.js";
 import {
@@ -157,11 +157,14 @@ async function resolveImportCustomColumns(
   return { keys: [...present], defByKey };
 }
 
-const app = new OpenAPIHono<Env>();
-
-app.use("*", async (c, next) => {
-  initDB(c.env);
-  await next();
+// createApp bakes in the standard skeleton: OpenAPIHono construction, the
+// per-request D1/Storage init middleware, and API discovery (GET
+// /api/openapi.json + GET /llms.txt from the live routes). App code below is
+// just routes + business logic.
+const app = createApp<Env>({
+  title: "CRM App",
+  version: "1.0.0",
+  description: "A CRM with companies, contacts, and deal pipeline management.",
 });
 
 // ── Shared Schemas ─────────────────────────────────────────────────
@@ -1642,15 +1645,6 @@ app.delete("/api/custom-fields/:id", async (c) => {
   const ok = await deleteDef(c.req.param("id"));
   if (!ok) return c.json({ error: "Not found" }, 404);
   return c.json({ ok: true }, 200);
-});
-
-// ── API discovery ──────────────────────────────────────────────────
-// Serves /api/openapi.json + /llms.txt from the live routes so agents can
-// discover this app's API. Replaces the hand-mounted app.doc.
-mountDiscovery(app, {
-  title: "CRM App",
-  version: "1.0.0",
-  description: "A CRM with companies, contacts, and deal pipeline management.",
 });
 
 export default app;
