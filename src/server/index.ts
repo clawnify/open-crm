@@ -9,6 +9,8 @@ import {
   updateDef,
   deleteDef,
   coerceCustomValue,
+  classifyCustomWrite,
+  writableFieldKeys,
   isEntityType,
   type EntityType,
   type CustomFieldDef,
@@ -80,8 +82,48 @@ async function applyCustomValues(
   await run(`UPDATE ${table} SET ${sets.join(", ")} WHERE id = ?`, params);
 }
 
-/** Reusable request-body field: the nested bag of custom-property values. */
+/** Reusable request-body field: the nested bag of custom-property values.
+ *  Still accepted for back-compat, but custom keys may now also be sent flat at
+ *  the top level (see resolveCustomWrite). */
 const CustomValues = z.record(z.string(), z.any()).optional();
+
+/** Merge a request body's flat top-level custom keys with its nested `custom`
+ *  bag, then classify against the entity's registry. Both shapes are accepted
+ *  (the bag wins on a key conflict); built-in base keys pass through untouched.
+ *  Returns the writable custom values and any unknown keys the caller rejects. */
+async function resolveCustomWrite(
+  entity: EntityType,
+  body: Record<string, unknown>,
+): Promise<{ values: Record<string, unknown>; unknown: string[] }> {
+  const candidates: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) if (k !== "custom") candidates[k] = v;
+  const bag = body.custom;
+  if (bag && typeof bag === "object") Object.assign(candidates, bag as Record<string, unknown>);
+  return classifyCustomWrite(entity, candidates);
+}
+
+/** 422 body: a write named a field that is neither a base column nor a
+ *  registered custom field — surfaced loudly instead of silently dropped. */
+const UnknownFieldsSchema = z.object({
+  error: z.string(),
+  unknown_fields: z.array(z.string()),
+  valid_fields: z.array(z.string()),
+}).openapi("UnknownFields");
+
+/** Build the 422 body when a write named unknown keys, or null when the write is
+ *  clean. Returns the payload (not a Response) so each handler surfaces it via its
+ *  own typed `c.json(body, 422)` — keeping OpenAPIHono's strict response inference. */
+async function unknownFieldsError(
+  entity: EntityType,
+  unknown: string[],
+): Promise<z.infer<typeof UnknownFieldsSchema> | null> {
+  if (unknown.length === 0) return null;
+  return {
+    error: `Unknown field(s) for ${entity}: ${unknown.join(", ")}. Send a base field or a registered custom field, or define it first via POST /api/custom-fields.`,
+    unknown_fields: unknown,
+    valid_fields: await writableFieldKeys(entity),
+  };
+}
 
 /** Quote a SQL identifier (custom-field keys are already regex-validated at
  *  def creation, but quote defensively — same as applyCustomValues). */
@@ -349,12 +391,13 @@ const createCompany = createRoute({
         email: z.string().optional(),
         notes: z.string().optional(),
         custom: CustomValues,
-      }) } },
+      }).passthrough() } },
     },
   },
   responses: {
     201: { description: "Created company", content: { "application/json": { schema: z.object({ company: CompanySchema }) } } },
     400: { description: "Validation error", content: { "application/json": { schema: ErrorSchema } } },
+    422: { description: "Unknown field(s)", content: { "application/json": { schema: UnknownFieldsSchema } } },
     500: { description: "Server error", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
@@ -362,6 +405,9 @@ const createCompany = createRoute({
 app.openapi(createCompany, async (c) => {
   try {
     const body = c.req.valid("json");
+    const { values: customValues, unknown } = await resolveCustomWrite("company", body as unknown as Record<string, unknown>);
+    const unknownErr = await unknownFieldsError("company", unknown);
+    if (unknownErr) return c.json(unknownErr, 422);
     const name = body.name.trim();
     if (!name) return c.json({ error: "Name is required" }, 400);
 
@@ -371,7 +417,7 @@ app.openapi(createCompany, async (c) => {
       [id, name, (body.domain || "").trim(), (body.industry || "").trim(), (body.phone || "").trim(), (body.email || "").trim(), (body.notes || "").trim()],
     );
 
-    await applyCustomValues("company", "companies", id, body.custom);
+    await applyCustomValues("company", "companies", id, customValues);
 
     const inserted = await get("SELECT * FROM companies WHERE id = ?", [id]);
     return c.json({ company: inserted }, 201);
@@ -397,13 +443,14 @@ const updateCompany = createRoute({
         email: z.string().optional(),
         notes: z.string().optional(),
         custom: CustomValues,
-      }) } },
+      }).passthrough() } },
     },
   },
   responses: {
     200: { description: "Updated company", content: { "application/json": { schema: z.object({ company: CompanySchema }) } } },
     400: { description: "Validation error", content: { "application/json": { schema: ErrorSchema } } },
     404: { description: "Not found", content: { "application/json": { schema: ErrorSchema } } },
+    422: { description: "Unknown field(s)", content: { "application/json": { schema: UnknownFieldsSchema } } },
     500: { description: "Server error", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
@@ -414,6 +461,9 @@ app.openapi(updateCompany, async (c) => {
     if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const body = c.req.valid("json");
+    const { values: customValues, unknown } = await resolveCustomWrite("company", body as unknown as Record<string, unknown>);
+    const unknownErr = await unknownFieldsError("company", unknown);
+    if (unknownErr) return c.json(unknownErr, 422);
     const fields: string[] = [];
     const params: unknown[] = [];
 
@@ -424,7 +474,7 @@ app.openapi(updateCompany, async (c) => {
       }
     }
 
-    const hasCustom = !!body.custom && Object.keys(body.custom).length > 0;
+    const hasCustom = Object.keys(customValues).length > 0;
     if (fields.length === 0 && !hasCustom) return c.json({ error: "No fields to update" }, 400);
 
     const exists = await get("SELECT id FROM companies WHERE id = ?", [id]);
@@ -435,7 +485,7 @@ app.openapi(updateCompany, async (c) => {
       params.push(id);
       await run("UPDATE companies SET " + fields.join(", ") + " WHERE id = ?", params);
     }
-    await applyCustomValues("company", "companies", id, body.custom);
+    await applyCustomValues("company", "companies", id, customValues);
 
     const updated = await get("SELECT * FROM companies WHERE id = ?", [id]);
     return c.json({ company: updated }, 200);
@@ -574,12 +624,13 @@ const createContact = createRoute({
         title: z.string().optional(),
         status: z.string().optional(),
         custom: CustomValues,
-      }) } },
+      }).passthrough() } },
     },
   },
   responses: {
     201: { description: "Created contact", content: { "application/json": { schema: z.object({ contact: ContactSchema }) } } },
     400: { description: "Validation error", content: { "application/json": { schema: ErrorSchema } } },
+    422: { description: "Unknown field(s)", content: { "application/json": { schema: UnknownFieldsSchema } } },
     500: { description: "Server error", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
@@ -587,6 +638,9 @@ const createContact = createRoute({
 app.openapi(createContact, async (c) => {
   try {
     const body = c.req.valid("json");
+    const { values: customValues, unknown } = await resolveCustomWrite("contact", body as unknown as Record<string, unknown>);
+    const unknownErr = await unknownFieldsError("contact", unknown);
+    if (unknownErr) return c.json(unknownErr, 422);
     const firstName = body.first_name.trim();
     if (!firstName) return c.json({ error: "First name is required" }, 400);
 
@@ -605,7 +659,7 @@ app.openapi(createContact, async (c) => {
       [id, firstName, (body.last_name || "").trim(), (body.email || "").trim(), (body.phone || "").trim(), companyId, (body.title || "").trim(), (body.status || "lead").trim()],
     );
 
-    await applyCustomValues("contact", "contacts", id, body.custom);
+    await applyCustomValues("contact", "contacts", id, customValues);
 
     const inserted = await get(
       `SELECT ct.*, co.name as company_name, co.domain as company_domain
@@ -637,13 +691,14 @@ const updateContact = createRoute({
         title: z.string().optional(),
         status: z.string().optional(),
         custom: CustomValues,
-      }) } },
+      }).passthrough() } },
     },
   },
   responses: {
     200: { description: "Updated contact", content: { "application/json": { schema: z.object({ contact: ContactSchema }) } } },
     400: { description: "Validation error", content: { "application/json": { schema: ErrorSchema } } },
     404: { description: "Not found", content: { "application/json": { schema: ErrorSchema } } },
+    422: { description: "Unknown field(s)", content: { "application/json": { schema: UnknownFieldsSchema } } },
     500: { description: "Server error", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
@@ -654,6 +709,9 @@ app.openapi(updateContact, async (c) => {
     if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const body = c.req.valid("json");
+    const { values: customValues, unknown } = await resolveCustomWrite("contact", body as unknown as Record<string, unknown>);
+    const unknownErr = await unknownFieldsError("contact", unknown);
+    if (unknownErr) return c.json(unknownErr, 422);
     const fields: string[] = [];
     const params: unknown[] = [];
 
@@ -668,7 +726,7 @@ app.openapi(updateContact, async (c) => {
       params.push(body.company_id ? String(body.company_id) : null);
     }
 
-    const hasCustom = !!body.custom && Object.keys(body.custom).length > 0;
+    const hasCustom = Object.keys(customValues).length > 0;
     if (fields.length === 0 && !hasCustom) return c.json({ error: "No fields to update" }, 400);
 
     const exists = await get("SELECT id FROM contacts WHERE id = ?", [id]);
@@ -679,7 +737,7 @@ app.openapi(updateContact, async (c) => {
       params.push(id);
       await run("UPDATE contacts SET " + fields.join(", ") + " WHERE id = ?", params);
     }
-    await applyCustomValues("contact", "contacts", id, body.custom);
+    await applyCustomValues("contact", "contacts", id, customValues);
 
     const updated = await get(
       `SELECT ct.*, co.name as company_name, co.domain as company_domain
@@ -855,12 +913,13 @@ const createDeal = createRoute({
         close_date: z.string().optional(),
         notes: z.string().optional(),
         custom: CustomValues,
-      }) } },
+      }).passthrough() } },
     },
   },
   responses: {
     201: { description: "Created deal", content: { "application/json": { schema: z.object({ deal: DealSchema }) } } },
     400: { description: "Validation error", content: { "application/json": { schema: ErrorSchema } } },
+    422: { description: "Unknown field(s)", content: { "application/json": { schema: UnknownFieldsSchema } } },
     500: { description: "Server error", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
@@ -868,6 +927,9 @@ const createDeal = createRoute({
 app.openapi(createDeal, async (c) => {
   try {
     const body = c.req.valid("json");
+    const { values: customValues, unknown } = await resolveCustomWrite("deal", body as unknown as Record<string, unknown>);
+    const unknownErr = await unknownFieldsError("deal", unknown);
+    if (unknownErr) return c.json(unknownErr, 422);
     const name = body.name.trim();
     if (!name) return c.json({ error: "Name is required" }, 400);
 
@@ -880,7 +942,7 @@ app.openapi(createDeal, async (c) => {
       [id, name, contactId, value, (body.stage || "prospect").trim(), (body.close_date || "").trim(), (body.notes || "").trim()],
     );
 
-    await applyCustomValues("deal", "deals", id, body.custom);
+    await applyCustomValues("deal", "deals", id, customValues);
 
     const inserted = await get(
       `SELECT d.*, ct.first_name as contact_first_name, ct.last_name as contact_last_name,
@@ -914,13 +976,14 @@ const updateDeal = createRoute({
         close_date: z.string().optional(),
         notes: z.string().optional(),
         custom: CustomValues,
-      }) } },
+      }).passthrough() } },
     },
   },
   responses: {
     200: { description: "Updated deal", content: { "application/json": { schema: z.object({ deal: DealSchema }) } } },
     400: { description: "Validation error", content: { "application/json": { schema: ErrorSchema } } },
     404: { description: "Not found", content: { "application/json": { schema: ErrorSchema } } },
+    422: { description: "Unknown field(s)", content: { "application/json": { schema: UnknownFieldsSchema } } },
     500: { description: "Server error", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
@@ -931,6 +994,9 @@ app.openapi(updateDeal, async (c) => {
     if (!id) return c.json({ error: "Invalid ID" }, 400);
 
     const body = c.req.valid("json");
+    const { values: customValues, unknown } = await resolveCustomWrite("deal", body as unknown as Record<string, unknown>);
+    const unknownErr = await unknownFieldsError("deal", unknown);
+    if (unknownErr) return c.json(unknownErr, 422);
     const fields: string[] = [];
     const params: unknown[] = [];
 
@@ -949,7 +1015,7 @@ app.openapi(updateDeal, async (c) => {
       params.push(body.contact_id ? String(body.contact_id) : null);
     }
 
-    const hasCustom = !!body.custom && Object.keys(body.custom).length > 0;
+    const hasCustom = Object.keys(customValues).length > 0;
     if (fields.length === 0 && !hasCustom) return c.json({ error: "No fields to update" }, 400);
 
     const exists = await get("SELECT id FROM deals WHERE id = ?", [id]);
@@ -960,7 +1026,7 @@ app.openapi(updateDeal, async (c) => {
       params.push(id);
       await run("UPDATE deals SET " + fields.join(", ") + " WHERE id = ?", params);
     }
-    await applyCustomValues("deal", "deals", id, body.custom);
+    await applyCustomValues("deal", "deals", id, customValues);
 
     const updated = await get<Record<string, unknown>>(
       `SELECT d.*, ct.first_name as contact_first_name, ct.last_name as contact_last_name,
