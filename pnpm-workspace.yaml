@@ -8,3 +8,4 @@ minimumReleaseAgeExclude:
   # First-party Clawnify package — exempt from the new-release age gate so app
   # builds pick up fresh versions promptly.
   - '@clawnify/routes'
+  - '@clawnify/app'
