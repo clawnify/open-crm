@@ -1091,71 +1091,6 @@ app.openapi(deleteDeal, async (c) => {
   }
 });
 
-// ── Lookup endpoints (for select dropdowns) ────────────────────────
-
-const allCompanies = createRoute({
-  method: "get",
-  path: "/api/companies/all",
-  tags: ["Lookups"],
-  summary: "Get all companies for dropdown selects",
-  responses: {
-    200: {
-      description: "All companies (id, name, domain)",
-      content: { "application/json": { schema: z.object({
-        companies: z.array(z.object({
-          id: z.string(),
-          name: z.string(),
-          domain: z.string(),
-        })),
-      }) } },
-    },
-    500: { description: "Server error", content: { "application/json": { schema: ErrorSchema } } },
-  },
-});
-
-app.openapi(allCompanies, async (c) => {
-  try {
-    const companies = await query("SELECT id, name, domain FROM companies ORDER BY name ASC");
-    return c.json({ companies }, 200);
-  } catch (err: unknown) {
-    return c.json({ error: (err as Error).message }, 500);
-  }
-});
-
-const allContacts = createRoute({
-  method: "get",
-  path: "/api/contacts/all",
-  tags: ["Lookups"],
-  summary: "Get all contacts for dropdown selects",
-  responses: {
-    200: {
-      description: "All contacts with company info",
-      content: { "application/json": { schema: z.object({
-        contacts: z.array(z.object({
-          id: z.string(),
-          first_name: z.string(),
-          last_name: z.string(),
-          company_name: z.string().nullable(),
-          company_domain: z.string().nullable(),
-        })),
-      }) } },
-    },
-    500: { description: "Server error", content: { "application/json": { schema: ErrorSchema } } },
-  },
-});
-
-app.openapi(allContacts, async (c) => {
-  try {
-    const contacts = await query(
-      `SELECT ct.id, ct.first_name, ct.last_name, co.name as company_name, co.domain as company_domain
-       FROM contacts ct LEFT JOIN companies co ON ct.company_id = co.id ORDER BY ct.first_name ASC`,
-    );
-    return c.json({ contacts }, 200);
-  } catch (err: unknown) {
-    return c.json({ error: (err as Error).message }, 500);
-  }
-});
-
 // ── Activity timeline ──────────────────────────────────────────────
 // Plain Hono handlers (not createRoute) to keep the integration surface
 // compact; validation is done inline in the same defensive style as above.
@@ -1583,7 +1518,6 @@ app.post("/api/companies/import", async (c) => {
 });
 
 // ── Single contact (for deep-linked detail view) ───────────────────
-// Plain handler; the static /api/contacts/all route takes precedence in Hono.
 
 app.get("/api/contacts/:id", async (c) => {
   try {

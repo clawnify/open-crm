@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, type Dispatch, type SetStateAction } 
 import { api } from "../api";
 import type {
   Contact, Company, Deal, Stats, PaginatedState,
-  CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType, CustomFieldDef, ImportRow, ImportEntity, ImportResult,
+  Activity, ConnectionStatus, EntityType, CustomFieldDef, ImportRow, ImportEntity, ImportResult,
 } from "../types";
 import type { CrmContextValue } from "../context";
 
@@ -35,8 +35,6 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
   const [dealsTotalValue, setDealsTotalValue] = useState(0);
   const [boardDeals, setBoardDeals] = useState<Deal[]>([]);
 
-  const [companyLookup, setCompanyLookup] = useState<CompanyLookup[]>([]);
-  const [contactLookup, setContactLookup] = useState<ContactLookup[]>([]);
   const [connections, setConnections] = useState<ConnectionStatus>({ email: false, meeting: false, slack: false });
   const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
 
@@ -70,15 +68,6 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     setBoardDeals(data.deals);
   }, []);
 
-  const fetchLookups = useCallback(async () => {
-    const [co, ct] = await Promise.all([
-      api<{ companies: CompanyLookup[] }>("GET", "/api/companies/all"),
-      api<{ contacts: ContactLookup[] }>("GET", "/api/contacts/all"),
-    ]);
-    setCompanyLookup(co.companies);
-    setContactLookup(ct.contacts);
-  }, []);
-
   const fetchConnections = useCallback(async () => {
     try {
       setConnections(await api<ConnectionStatus>("GET", "/api/integrations/status"));
@@ -100,7 +89,7 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
       try {
         await Promise.all([
           fetchStats(), fetchContacts(contactsPag), fetchCompanies(companiesPag),
-          fetchDeals(dealsPag), fetchBoardDeals(), fetchLookups(), fetchConnections(),
+          fetchDeals(dealsPag), fetchBoardDeals(), fetchConnections(),
           refetchCustomFields(),
         ]);
       } catch (err) {
@@ -140,18 +129,18 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
 
   const addContact = useCallback(async (data: Partial<Contact>) => {
     await api("POST", "/api/contacts", data);
-    await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
-  }, [contactsPag, fetchContacts, fetchStats, fetchLookups]);
+    await Promise.all([fetchContacts(contactsPag), fetchStats()]);
+  }, [contactsPag, fetchContacts, fetchStats]);
 
   const updateContact = useCallback(async (id: string, data: Partial<Contact>) => {
     await api("PUT", `/api/contacts/${id}`, data);
-    await Promise.all([fetchContacts(contactsPag), fetchLookups()]);
-  }, [contactsPag, fetchContacts, fetchLookups]);
+    await fetchContacts(contactsPag);
+  }, [contactsPag, fetchContacts]);
 
   const deleteContact = useCallback(async (id: string) => {
     await api("DELETE", `/api/contacts/${id}`);
-    await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
-  }, [contactsPag, fetchContacts, fetchStats, fetchLookups]);
+    await Promise.all([fetchContacts(contactsPag), fetchStats()]);
+  }, [contactsPag, fetchContacts, fetchStats]);
 
   const fetchContact = useCallback(async (id: string): Promise<Contact | null> => {
     try {
@@ -166,18 +155,18 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
 
   const addCompany = useCallback(async (data: Partial<Company>) => {
     await api("POST", "/api/companies", data);
-    await Promise.all([fetchCompanies(companiesPag), fetchStats(), fetchLookups()]);
-  }, [companiesPag, fetchCompanies, fetchStats, fetchLookups]);
+    await Promise.all([fetchCompanies(companiesPag), fetchStats()]);
+  }, [companiesPag, fetchCompanies, fetchStats]);
 
   const updateCompany = useCallback(async (id: string, data: Partial<Company>) => {
     await api("PUT", `/api/companies/${id}`, data);
-    await Promise.all([fetchCompanies(companiesPag), fetchLookups()]);
-  }, [companiesPag, fetchCompanies, fetchLookups]);
+    await fetchCompanies(companiesPag);
+  }, [companiesPag, fetchCompanies]);
 
   const deleteCompany = useCallback(async (id: string) => {
     await api("DELETE", `/api/companies/${id}`);
-    await Promise.all([fetchCompanies(companiesPag), fetchStats(), fetchLookups()]);
-  }, [companiesPag, fetchCompanies, fetchStats, fetchLookups]);
+    await Promise.all([fetchCompanies(companiesPag), fetchStats()]);
+  }, [companiesPag, fetchCompanies, fetchStats]);
 
   // ── Deals CRUD ──
 
@@ -224,17 +213,17 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     async (entity: ImportEntity, rows: ImportRow[], opts?: { inferCompanyFromEmail?: boolean }): Promise<ImportResult> => {
       if (entity === "company") {
         const res = await api<ImportResult>("POST", "/api/companies/import", { companies: rows });
-        await Promise.all([fetchCompanies(companiesPag), fetchStats(), fetchLookups()]);
+        await Promise.all([fetchCompanies(companiesPag), fetchStats()]);
         return res;
       }
       const res = await api<ImportResult>("POST", "/api/contacts/import", {
         contacts: rows,
         inferCompanyFromEmail: opts?.inferCompanyFromEmail ?? false,
       });
-      await Promise.all([fetchContacts(contactsPag), fetchStats(), fetchLookups()]);
+      await Promise.all([fetchContacts(contactsPag), fetchStats()]);
       return res;
     },
-    [contactsPag, companiesPag, fetchContacts, fetchCompanies, fetchStats, fetchLookups],
+    [contactsPag, companiesPag, fetchContacts, fetchCompanies, fetchStats],
   );
 
   return {
@@ -245,7 +234,6 @@ export function useCrmState(isAgent: boolean): CrmContextValue {
     addCompany, updateCompany, deleteCompany,
     deals, dealsPag, dealsTotalValue, setDealsPage: dSet.setPage, setDealsSort: dSet.setSort, setDealsSearch: dSet.setSearch,
     addDeal, updateDeal, deleteDeal, boardDeals,
-    companyLookup, contactLookup,
     connections, emailContact, scheduleMeeting,
     fetchActivities, addNote, importEntity,
     customFields, refetchCustomFields,

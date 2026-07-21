@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { View, Contact, Company, Deal, Stats, PaginatedState, CompanyLookup, ContactLookup, Activity, ConnectionStatus, EntityType, CustomFieldDef, ImportRow, ImportEntity, ImportResult } from "./types";
+import type { View, Contact, Company, Deal, Stats, PaginatedState, Activity, ConnectionStatus, EntityType, CustomFieldDef, ImportRow, ImportEntity, ImportResult } from "./types";
 
 export interface CrmContextValue {
   isAgent: boolean;
@@ -39,10 +39,6 @@ export interface CrmContextValue {
   updateDeal: (id: string, data: Partial<Deal>) => Promise<void>;
   deleteDeal: (id: string) => Promise<void>;
   boardDeals: Deal[];
-
-  // Lookups
-  companyLookup: CompanyLookup[];
-  contactLookup: ContactLookup[];
 
   // Integrations (Clawnify connections)
   connections: ConnectionStatus;
