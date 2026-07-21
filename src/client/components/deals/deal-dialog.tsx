@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { api } from "@/api";
 import { CustomFieldsSection, readCustom } from "@/lib/custom-fields";
 import type { Deal } from "@/types";
 
@@ -52,7 +53,7 @@ export function DealDialog({
   onOpenChange: (open: boolean) => void;
   deal?: Deal;
 }) {
-  const { contactLookup, addDeal, updateDeal, setError, customFields } = useCrm();
+  const { addDeal, updateDeal, setError, customFields } = useCrm();
   const dealFields = customFields.filter((d) => d.entity_type === "deal");
   const [form, setForm] = useState<FormState>(() => toForm(deal));
   const [custom, setCustom] = useState<Record<string, unknown>>({});
@@ -117,10 +118,17 @@ export function DealDialog({
               placeholder="None"
               searchPlaceholder="Search contacts…"
               emptyText="No contacts found."
-              options={[
-                { value: NO_CONTACT, label: "None" },
-                ...contactLookup.map((c) => ({ value: c.id, label: `${c.first_name} ${c.last_name}`.trim() || "—" })),
-              ]}
+              options={[{ value: NO_CONTACT, label: "None" }]}
+              valueLabel={
+                deal ? `${deal.contact_first_name ?? ""} ${deal.contact_last_name ?? ""}`.trim() || undefined : undefined
+              }
+              onSearch={async (query) => {
+                const { contacts } = await api<{ contacts: { id: string; first_name: string; last_name: string }[] }>(
+                  "GET",
+                  `/api/contacts?limit=20&search=${encodeURIComponent(query)}`,
+                );
+                return contacts.map((c) => ({ value: c.id, label: `${c.first_name} ${c.last_name}`.trim() || "—" }));
+              }}
             />
           </div>
 

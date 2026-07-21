@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { api } from "@/api";
 import { CustomFieldsSection, readCustom } from "@/lib/custom-fields";
 import type { Contact } from "@/types";
 
@@ -53,7 +54,7 @@ export function ContactDialog({
   onOpenChange: (open: boolean) => void;
   contact?: Contact;
 }) {
-  const { companyLookup, addContact, updateContact, setError, customFields } = useCrm();
+  const { addContact, updateContact, setError, customFields } = useCrm();
   const contactFields = customFields.filter((d) => d.entity_type === "contact");
   const [form, setForm] = useState<FormState>(() => toForm(contact));
   const [custom, setCustom] = useState<Record<string, unknown>>({});
@@ -142,10 +143,15 @@ export function ContactDialog({
                 placeholder="None"
                 searchPlaceholder="Search companies…"
                 emptyText="No companies found."
-                options={[
-                  { value: NO_COMPANY, label: "None" },
-                  ...companyLookup.map((co) => ({ value: co.id, label: co.name })),
-                ]}
+                options={[{ value: NO_COMPANY, label: "None" }]}
+                valueLabel={contact?.company_name ?? undefined}
+                onSearch={async (query) => {
+                  const { companies } = await api<{ companies: { id: string; name: string }[] }>(
+                    "GET",
+                    `/api/companies?limit=20&search=${encodeURIComponent(query)}`,
+                  );
+                  return companies.map((co) => ({ value: co.id, label: co.name }));
+                }}
               />
             </div>
             <div className="flex flex-col gap-1.5">

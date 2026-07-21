@@ -97,20 +97,6 @@ export interface PaginatedState {
   filters: Filter[];
 }
 
-export interface CompanyLookup {
-  id: string;
-  name: string;
-  domain: string;
-}
-
-export interface ContactLookup {
-  id: string;
-  first_name: string;
-  last_name: string;
-  company_name?: string | null;
-  company_domain?: string | null;
-}
-
 export interface Activity {
   id: string;
   entity_type: EntityType;
