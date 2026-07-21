@@ -1,4 +1,4 @@
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { OpenAPIHono, createRoute, z, mountDiscovery } from "@clawnify/routes";
 import freemailDomains from "free-email-domains";
 import { initDB, query, get, run } from "./db.js";
 import type { CredentialBinding } from "@clawnify/connections";
@@ -1644,11 +1644,13 @@ app.delete("/api/custom-fields/:id", async (c) => {
   return c.json({ ok: true }, 200);
 });
 
-// ── OpenAPI Doc ────────────────────────────────────────────────────
-
-app.doc("/openapi.json", {
-  openapi: "3.0.0",
-  info: { title: "CRM App", version: "1.0.0", description: "A CRM with companies, contacts, and deal pipeline management." },
+// ── API discovery ──────────────────────────────────────────────────
+// Serves /api/openapi.json + /llms.txt from the live routes so agents can
+// discover this app's API. Replaces the hand-mounted app.doc.
+mountDiscovery(app, {
+  title: "CRM App",
+  version: "1.0.0",
+  description: "A CRM with companies, contacts, and deal pipeline management.",
 });
 
 export default app;
