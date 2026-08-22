@@ -2,7 +2,7 @@
 
 # OpenCRM: The Open-Source HubSpot Alternative for SaaS
 
-[![Deploy with Clawnify](https://app.clawnify.com/deploy-button.svg)](https://app.clawnify.com/deploy?repo=clawnify/open-crm)
+[![Deploy with Clawnify](https://app.clawnify.com/deploy-button.svg)](https://app.clawnify.com/deploy?repo=clawnify/OpenCRM)
 
 A lightweight CRM with contacts, companies, and deals — built for SaaS dashboards and AI agents. Part of the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem. Zero cloud dependencies — runs locally with SQLite.
 
@@ -29,7 +29,7 @@ Unlike HubSpot or Salesforce, this runs entirely on your own infrastructure with
 ## Quickstart
 
 ```bash
-git clone https://github.com/clawnify/open-crm.git
+git clone https://github.com/clawnify/OpenCRM.git
 cd open-crm
 pnpm install
 pnpm run dev
