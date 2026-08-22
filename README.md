@@ -1,6 +1,6 @@
-<img src="readme-banner.png" alt="Open CRM preview" width="100%" />
+<img src="readme-banner.png" alt="OpenCRM preview" width="100%" />
 
-# OpenClaw CRM App: The Open-Source HubSpot Alternative for SaaS
+# OpenCRM: The Open-Source HubSpot Alternative for SaaS
 
 [![Deploy with Clawnify](https://app.clawnify.com/deploy-button.svg)](https://app.clawnify.com/deploy?repo=clawnify/open-crm)
 
@@ -10,7 +10,7 @@ Built with **React + Tailwind + shadcn/ui** on **Hono + Cloudflare D1**. Path-ba
 
 ## What Is It?
 
-Clawnify CRM App is a production-ready contact relationship manager designed for the OpenClaw community. Think of it as an open-source HubSpot alternative — a CRM you can self-host, customize, and embed in any SaaS product.
+OpenCRM is a production-ready contact relationship manager designed for the OpenClaw community. Think of it as an open-source HubSpot alternative — a CRM you can self-host, customize, and embed in any SaaS product.
 
 Unlike HubSpot or Salesforce, this runs entirely on your own infrastructure with no API keys, no vendor lock-in, and no per-seat pricing. It provides a complete sales pipeline and lead management system. Manage contacts, companies, and deals with rich column types, inline editing, and full CRUD — all out of the box.
 
